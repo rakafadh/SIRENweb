@@ -1,0 +1,12 @@
+# SIREN: let the dialout group use the ESP32 boards' USB serial ports, and
+# keep ModemManager from probing them with AT commands (it opens every new
+# ttyACM/ttyUSB it sees, which garbles the first seconds of sensor data).
+#
+#   10c4:ea60  Silicon Labs CP210x   (classic ESP32 DevKit)
+#   1a86:*     WCH CH340 / CH343     (common on clone boards)
+#   303a:*     Espressif native USB  (ESP32-S3)
+#
+# Check what your boards report with:  udevadm info -q property -n /dev/ttyUSB0 | grep ID_
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE="0660", GROUP="dialout", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", MODE="0660", GROUP="dialout", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", MODE="0660", GROUP="dialout", ENV{ID_MM_DEVICE_IGNORE}="1"

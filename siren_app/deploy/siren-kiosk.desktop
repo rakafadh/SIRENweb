@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=SIREN
+Comment=Triase dan pemantauan pasien ambulans
+Exec=__APP_DIR__/deploy/kiosk.sh
+Icon=applications-science
+Terminal=false
+X-GNOME-Autostart-enabled=true

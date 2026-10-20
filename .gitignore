@@ -1,0 +1,48 @@
+# ---------------------------------------------------------------------------
+# Data pasien dan data lokal perangkat. JANGAN PERNAH di-push.
+# ---------------------------------------------------------------------------
+# Database SQLite (pasien, tanda vital, linimasa) beserta file WAL-nya
+siren_app/*.db
+siren_app/*.db-wal
+siren_app/*.db-shm
+# Label serah terima yang dicetak ke file (berisi nama pasien dan QR ringkasan)
+siren_app/prints/
+# Mode sensor yang dipilih di menu Perangkat; milik masing-masing perangkat
+siren_app/runtime.json
+siren_app/runtime.tmp
+# Pengaturan lokal (port, printer, unit ambulans). Semua punya nilai bawaan di app/config.py.
+siren_app/.env
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# ---------------------------------------------------------------------------
+# PlatformIO (firmware ESP32): hasil compile dan file editor yang berisi path lokal
+# ---------------------------------------------------------------------------
+siren-sensors/.pio/
+siren-sensors/.vscode/.browse.c_cpp.db*
+siren-sensors/.vscode/c_cpp_properties.json
+siren-sensors/.vscode/launch.json
+siren-sensors/.vscode/ipch
+
+# ---------------------------------------------------------------------------
+# Sistem operasi
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Opsional: hapus tanda # bila tidak ingin ikut di-push
+# ---------------------------------------------------------------------------
+# Rekaman sensor dari uji coba (tanda vital anggota tim)
+# siren-sensors/siren_log.csv
+# File bantu AI, tidak dipakai aplikasi
+# siren_app/.agents/
+# siren_app/skills-lock.json

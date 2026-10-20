@@ -1,0 +1,272 @@
+{% extends 'base.html' %}
+{% block title %}Serah terima{% endblock %}
+{% block content %}
+<div class="page" data-patient-id="{{ patient_id }}">
+  <div class="page-head">
+    <a class="btn btn-ghost btn-sm hidden" id="backLink" href="/monitor">← Pemantauan <kbd>M</kbd></a>
+    <div class="head-title">
+      <span class="eyebrow">Serah terima · <span class="mono" id="hCode"></span></span>
+      <h2 id="hName"><span class="skeleton">Memuat</span></h2>
+    </div>
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-sm" id="previewBtn">Pratinjau label</button>
+    <button type="button" class="btn btn-sm" id="printBtn">Cetak label <kbd>L</kbd></button>
+    <button type="button" class="btn btn-sm" id="pdfBtn">Ekspor PDF <kbd>E</kbd></button>
+    <button type="button" class="btn btn-sm btn-primary hidden" id="handoverBtn">Selesai serah terima</button>
+  </div>
+
+  <div class="notice hidden" id="doneNotice">
+    <span id="doneText">Sudah diserahterimakan.</span>
+    <a class="btn btn-sm btn-primary" href="/start">Pasien baru <kbd>N</kbd></a>
+  </div>
+
+  <div class="status-strip fill-none" id="hStrip">
+    <span class="word" id="hColour">—</span>
+    <div class="facts-inline" id="hFacts"></div>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" aria-selected="true" aria-controls="tabSummary" id="tabBtnSummary">Ringkasan</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="tabTimeline" id="tabBtnTimeline">Linimasa vital <span class="count" id="countTimeline"></span></button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="tabEvents" id="tabBtnEvents">Catatan &amp; tindakan <span class="count" id="countEvents"></span></button>
+  </div>
+
+  <section id="tabSummary" role="tabpanel" aria-labelledby="tabBtnSummary">
+    <div class="cols-3">
+      <div class="card"><div class="card-title"><h3>Pasien</h3></div><dl class="kv" id="kvPatient"></dl></div>
+      <div class="card"><div class="card-title"><h3>Saat penjemputan</h3></div><dl class="kv" id="kvStart"></dl></div>
+      <div class="card"><div class="card-title"><h3>Kondisi terakhir</h3><span class="faint" id="lastAt"></span></div><dl class="kv" id="kvLatest"></dl></div>
+    </div>
+    <div class="card" style="margin-top:10px">
+      <div class="card-title"><h3>Peringatan selama perjalanan</h3></div>
+      <ul class="alerts" id="alertList"></ul>
+    </div>
+  </section>
+
+  <section id="tabTimeline" role="tabpanel" aria-labelledby="tabBtnTimeline" hidden>
+    <div class="table-wrap" style="max-height: calc(100dvh - 300px)">
+      <table class="table">
+        <thead><tr><th>Waktu</th><th>Kategori</th><th class="num">NEWS2</th><th class="num">Nadi</th><th class="num">SpO₂</th><th class="num">Napas</th><th class="num">Suhu</th><th class="num">TD manset</th><th>Sumber kategori</th></tr></thead>
+        <tbody id="timelineBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tabEvents" role="tabpanel" aria-labelledby="tabBtnEvents" hidden>
+    <div class="table-wrap" style="max-height: calc(100dvh - 300px)">
+      <table class="table">
+        <thead><tr><th style="width:90px">Waktu</th><th style="width:110px">Jenis</th><th>Keterangan</th></tr></thead>
+        <tbody id="eventsBody"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block drawers %}
+<aside class="drawer" id="drawerLabel" aria-hidden="true" aria-labelledby="labelTitle" role="dialog">
+  <div class="drawer-head"><h2 id="labelTitle">Pratinjau label</h2><button type="button" class="btn btn-ghost btn-sm" data-close-drawer>Tutup <kbd>Esc</kbd></button></div>
+  <div class="drawer-body stack">
+    <p class="muted">Ukuran sebenarnya 58 mm. QR berisi ringkasan teks dan bisa dibaca kamera HP tanpa internet.</p>
+    <div class="label-preview"><img id="labelImg" alt="Pratinjau label serah terima" /></div>
+    <p class="form-alert" id="labelError"></p>
+  </div>
+  <div class="drawer-foot">
+    <button type="button" class="btn btn-ghost" data-close-drawer>Tutup</button>
+    <button type="button" class="btn btn-primary" id="printFromPreview">Cetak label</button>
+  </div>
+</aside>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (() => {
+    const S = SIREN;
+    const { api, num, time, dateTime, setText, el, toast, busy, shortcut } = S;
+    const patientId = document.querySelector('[data-patient-id]').dataset.patientId;
+    const KIND = { START: 'Penjemputan', INPUT: 'Input', CUFF_BP: 'TD manset', MANUAL_VITAL: 'Vital manual', TIDAK_DIUKUR: 'Tidak diukur', TINDAKAN: 'Tindakan', KATEGORI: 'Kategori', STATUS: 'Status', CETAK: 'Cetak' };
+    const yes = (v) => (v ? 'ya' : 'tidak');
+    let detail = null;
+    let armed = false;
+
+    function kv(id, rows) {
+      document.getElementById(id).replaceChildren(...rows.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', {}, [v ?? '—'])]));
+    }
+
+    function render(d) {
+      detail = d;
+      const p = d.patient;
+      const latest = d.latest_triage || {};
+      const first = d.first_triage || {};
+      const active = p.status === 'ACTIVE';
+      const last = d.timeline[d.timeline.length - 1] || {};
+
+      setText('hCode', p.code);
+      setText('hName', p.display_name);
+      document.getElementById('backLink').classList.toggle('hidden', !active);
+      document.getElementById('handoverBtn').classList.toggle('hidden', !active);
+      document.getElementById('doneNotice').classList.toggle('hidden', active);
+      if (!active) setText('doneText', `Diserahterimakan ${dateTime(p.handed_over_at)}. Data pasien ini terkunci.`);
+
+      document.getElementById('hStrip').className = `status-strip fill-${S.COLOUR_CLASS[latest.colour] || 'none'}`;
+      setText('hColour', latest.colour || 'Belum ada data');
+      const facts = [
+        ['NEWS2', latest.news2_total === null || latest.news2_total === undefined ? '—' : `${latest.news2_total} (${latest.news2_measured}/7)`],
+        ['Sumber', latest.source || '—'],
+        ['START', first.start_colour ? `${first.start_colour}, ${first.start_reason}` : '—'],
+        ['Terberat', d.worst_colour || '—'],
+        ['Dipantau', `${time(p.created_at)}–${active ? 'sekarang' : time(p.handed_over_at)}`],
+      ];
+      document.getElementById('hFacts').replaceChildren(...facts.map(([k, v]) => el('span', {}, [`${k} `, el('b', { text: v })])));
+
+      kv('kvPatient', [
+        ['Nama', p.display_name],
+        ['Usia / kelamin', `${p.age ?? '—'} th / ${p.sex || '—'}`],
+        ['Keluhan', p.complaint],
+        ['Komorbid', yes(p.comorbid)],
+        ['RS tujuan', p.destination],
+        ['Petugas', p.crew],
+        ['Unit', p.ambulance_id],
+      ]);
+      kv('kvStart', [
+        ['Kategori START', first.start_colour ? S.colourTag(first.start_colour) : '—'],
+        ['Alasan', first.start_reason],
+        ['Dapat berjalan', yes(p.ambulatory)],
+        ['Perdarahan tak terkontrol', yes(p.uncontrolled_bleeding)],
+        ['Risiko kehilangan anggota gerak', yes(p.limb_loss_risk)],
+        ['Nyeri dada', yes(p.chest_pain)],
+        ['Mulai', dateTime(p.created_at)],
+      ]);
+      setText('lastAt', last.captured_at ? time(last.captured_at, true) : '');
+      const excused = d.unmeasured || {};
+      const show = (key, unit, digits = 0) => (last[key] === null || last[key] === undefined
+        ? (excused[key] ? `tidak dapat diukur (${excused[key]})` : '—')
+        : `${num(last[key], digits)} ${unit}`);
+      kv('kvLatest', [
+        ['Kesadaran', S.ACVPU[p.acvpu]],
+        ['Oksigen tambahan', yes(p.on_oxygen)],
+        ['Skala nyeri', p.pain === null ? '—' : `${p.pain}/10`],
+        ['Nadi', show('hr', '/mnt')],
+        ['SpO₂', show('spo2', '%')],
+        ['Laju napas', show('rr', '/mnt')],
+        ['Suhu', show('temp', '°C', 1)],
+        ['TD manset', p.systolic === null
+          ? (excused.systolic ? `tidak dapat diukur (${excused.systolic})` : 'belum diukur')
+          : `${num(p.systolic)}/${num(p.diastolic)} mmHg, ${time(p.bp_cuff_at)}`],
+        ['Shock index', latest.shock_index === null || latest.shock_index === undefined ? '—' : num(latest.shock_index, 2)],
+      ]);
+
+      document.getElementById('alertList').replaceChildren(...(d.alerts.length
+        ? d.alerts.map((a) => el('li', {
+          class: /shock|naik|perdarahan/.test(a.alert) ? 'danger' : '',
+          text: a.count > 1
+            ? `${time(a.first_seen)}–${time(a.last_seen)} · ${a.alert} (${a.count}×)`
+            : `${time(a.first_seen)} · ${a.alert}`,
+        }))
+        : [el('li', { class: 'quiet', text: 'Tidak ada peringatan selama perjalanan.' })]));
+
+      setText('countTimeline', String(d.timeline.length));
+      setText('countEvents', String(d.events.length));
+      const tbody = document.getElementById('timelineBody');
+      tbody.replaceChildren(...(d.timeline.length ? d.timeline.slice().reverse().map((r) => {
+        const t = r.triage || {};
+        return el('tr', {}, [
+          el('td', { class: 'mono', text: time(r.captured_at, true) }),
+          el('td', {}, [S.colourTag(t.colour)]),
+          el('td', { class: 'num', text: t.news2_total ?? '—' }),
+          el('td', { class: 'num', text: num(r.hr) }), el('td', { class: 'num', text: num(r.spo2) }),
+          el('td', { class: 'num', text: num(r.rr) }), el('td', { class: 'num', text: num(r.temp, 1) }),
+          el('td', { class: 'num', text: r.systolic === null ? '—' : `${num(r.systolic)}/${num(r.diastolic)}` }),
+          el('td', { class: 'muted', text: t.source || '—' }),
+        ]);
+      }) : [el('tr', {}, [el('td', { colspan: '9', class: 'faint', text: 'Belum ada pembacaan tersimpan.' })])]));
+
+      document.getElementById('eventsBody').replaceChildren(...d.events.slice().reverse().map((e) => el('tr', {}, [
+        el('td', { class: 'mono', text: time(e.created_at, true) }),
+        el('td', { class: 'muted', text: KIND[e.kind] || e.kind }),
+        el('td', { text: e.detail }),
+      ])));
+    }
+
+    async function load() {
+      const result = await api(`/api/patients/${patientId}`);
+      if (!result.ok) {
+        setText('hName', '');
+        toast(`Ringkasan tidak dapat dimuat. ${result.error}`, { type: 'error' });
+        return;
+      }
+      render(result.data);
+    }
+
+    // ---------------------------------------------------------------- tabs
+    const tabs = [...document.querySelectorAll('[role="tab"]')];
+    tabs.forEach((tab) => tab.addEventListener('click', () => {
+      tabs.forEach((t) => {
+        const on = t === tab;
+        t.setAttribute('aria-selected', String(on));
+        document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+      });
+    }));
+
+    // ------------------------------------------------------------- actions
+    const printBtn = document.getElementById('printBtn');
+    async function printLabel(button = printBtn) {
+      await busy(button, async () => {
+        const result = await api(`/api/patients/${patientId}/print-label`, { method: 'POST', timeout: 30000 });
+        toast(result.ok ? result.data.message : `Label tidak tercetak. ${result.error}`, { type: result.ok ? 'success' : 'error' });
+        if (result.ok) load();
+      });
+    }
+    printBtn.addEventListener('click', () => printLabel());
+    document.getElementById('printFromPreview').addEventListener('click', (e) => printLabel(e.currentTarget));
+
+    const img = document.getElementById('labelImg');
+    img.addEventListener('error', () => setText('labelError', 'Pratinjau label gagal dibuat. Coba lagi, atau periksa log server.'));
+    img.addEventListener('load', () => setText('labelError', ''));
+    document.getElementById('previewBtn').addEventListener('click', () => {
+      img.src = `/api/patients/${patientId}/label.png?t=${Date.now()}`;
+      S.openDrawer('drawerLabel');
+    });
+
+    const pdfBtn = document.getElementById('pdfBtn');
+    const exportPdf = () => S.download(`/api/patients/${patientId}/handover.pdf`, `serah-terima-${detail ? detail.patient.code : 'pasien'}.pdf`, pdfBtn);
+    pdfBtn.addEventListener('click', exportPdf);
+
+    // Two presses instead of a browser dialog: the first arms, the second confirms.
+    const handoverBtn = document.getElementById('handoverBtn');
+    let disarm = null;
+    // Swap only the colour classes: render() owns the "hidden" class
+    function arm(on) {
+      armed = on;
+      handoverBtn.classList.toggle('btn-danger', on);
+      handoverBtn.classList.toggle('btn-primary', !on);
+      handoverBtn.textContent = on ? 'Tekan lagi untuk mengunci data' : 'Selesai serah terima';
+    }
+    handoverBtn.addEventListener('click', async () => {
+      if (!armed) {
+        arm(true);
+        disarm = setTimeout(() => arm(false), 5000);
+        return;
+      }
+      clearTimeout(disarm);
+      arm(false);
+      await busy(handoverBtn, async () => {
+        const result = await api(`/api/patients/${patientId}/handover`, { method: 'POST' });
+        if (!result.ok) {
+          toast(`Serah terima gagal. ${result.error}`, { type: 'error' });
+          return;
+        }
+        toast('Serah terima selesai. Data pasien dikunci.', { type: 'success' });
+        await load();
+      });
+    });
+
+    shortcut('L', 'Cetak label', () => printLabel());
+    shortcut('E', 'Ekspor PDF', exportPdf);
+    shortcut('M', 'Kembali ke pemantauan', () => { if (detail && detail.patient.status === 'ACTIVE') window.location.href = '/monitor'; });
+    shortcut('N', 'Pasien baru (setelah serah terima)', () => { if (detail && detail.patient.status !== 'ACTIVE') window.location.href = '/start'; });
+
+    load();
+  })();
+</script>
+{% endblock %}

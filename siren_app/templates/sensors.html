@@ -1,0 +1,247 @@
+{% extends 'base.html' %}
+{% block title %}Perangkat{% endblock %}
+{% block content %}
+<div class="page">
+  <div class="page-head">
+    <h2>Perangkat</h2>
+    <span class="faint">Diperbarui otomatis setiap 2 detik</span>
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-sm" id="rescanBtn">Pindai ulang port <kbd>R</kbd></button>
+  </div>
+
+  <section class="card mode-card" aria-labelledby="modeTitle">
+    <div class="mode-text">
+      <h3 id="modeTitle">Sumber data sensor</h3>
+      <p class="faint" id="modeHint">Memuat…</p>
+    </div>
+    <div class="mode-controls">
+      <div class="seg" role="radiogroup" aria-labelledby="modeTitle" id="modeGroup">
+        <label><input type="radio" name="mode" value="SERIAL" />Sensor sungguhan</label>
+        <label><input type="radio" name="mode" value="MOCK" />Simulasi</label>
+      </div>
+      <label class="field mode-scenario" id="scenarioField">
+        <span class="sr-only">Skenario simulasi</span>
+        <select name="scenario" id="scenarioSelect">
+          <option value="stable">Pasien stabil</option>
+          <option value="deteriorating">Pasien memburuk (5 menit)</option>
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <div class="device-grid">
+    <section class="card" aria-labelledby="ppgTitle">
+      <div class="device-head"><div><h3 id="ppgTitle">Node PPG</h3><span class="model">MAX30102</span></div><span class="state" id="ppgState"><i class="dot"></i><span>Memeriksa</span></span></div>
+      <dl class="kv" id="ppgKv"></dl>
+      <p class="field-hint" id="ppgHint" style="margin-top:8px"></p>
+    </section>
+    <section class="card" aria-labelledby="tempTitle">
+      <div class="device-head"><div><h3 id="tempTitle">Node suhu</h3><span class="model">MLX90614 + MPU6050</span></div><span class="state" id="tempState"><i class="dot"></i><span>Memeriksa</span></span></div>
+      <dl class="kv" id="tempKv"></dl>
+      <p class="field-hint" id="tempHint" style="margin-top:8px"></p>
+    </section>
+    <section class="card" aria-labelledby="printerTitle">
+      <div class="device-head"><div><h3 id="printerTitle">Printer label</h3><span class="model">Thermal 58 mm</span></div><span class="state" id="printerState"><i class="dot"></i><span>Memeriksa</span></span></div>
+      <dl class="kv" id="printerKv"></dl>
+      <p class="field-hint" id="printerHint" style="margin-top:8px"></p>
+      <div class="device-foot"><button type="button" class="btn btn-sm" id="testPrintBtn">Cetak uji</button></div>
+    </section>
+  </div>
+
+  <div class="cols-3" style="grid-template-columns: 1.2fr 1fr">
+    <section>
+      <div class="card-title"><h3>Port serial</h3></div>
+      <div class="table-wrap" style="max-height: 200px">
+        <table class="table">
+          <thead><tr><th>Port</th><th>Dikenali sebagai</th><th>Keadaan</th><th class="num">Baris</th><th>Terakhir</th></tr></thead>
+          <tbody id="ports"></tbody>
+        </table>
+      </div>
+    </section>
+    <section>
+      <div class="card-title"><h3>Perubahan status</h3></div>
+      <div class="table-wrap" style="max-height: 200px">
+        <table class="table">
+          <thead><tr><th>Waktu</th><th>Perangkat</th><th>Status</th></tr></thead>
+          <tbody id="events"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (() => {
+    const S = SIREN;
+    const { api, num, dateTime, el, setText, toast, busy } = S;
+    const STATUS = { CONNECTED: 'Terhubung', STALE: 'Berhenti mengirim', NOT_FOUND: 'Belum terdeteksi' };
+    const PORT_STATE = { OPENED: 'Terbuka', OPEN_FAILED: 'Gagal dibuka', LOST: 'Terputus', CLOSED: 'Ditutup' };
+    const ROLE = { PPG: 'Node PPG', TEMP: 'Node suhu' };
+
+    function kv(id, rows) {
+      document.getElementById(id).replaceChildren(...rows.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: v ?? '—' })]));
+    }
+    function state(id, cls, text) {
+      const node = document.getElementById(id);
+      node.querySelector('.dot').className = `dot ${cls}`;
+      node.querySelector('span').textContent = text;
+    }
+    const age = (s) => (s === null ? '—' : `${s} dtk lalu`);
+
+    function renderLive(live) {
+      const s = live.sensors;
+      const sensorVal = (key) => (live.vitals[key].source && live.vitals[key].source !== 'MANUAL' ? live.vitals[key].value : null);
+
+      const ppgOk = s.ppg.status === 'CONNECTED';
+      state('ppgState', ppgOk ? (s.ppg.finger === false ? 'warn' : 'ok') : s.ppg.status === 'STALE' ? 'warn' : 'bad',
+        ppgOk && s.ppg.finger === false ? 'Jari tidak terdeteksi' : STATUS[s.ppg.status]);
+      kv('ppgKv', [
+        ['Port', s.ppg.port],
+        ['Data terakhir', age(s.ppg.age_s)],
+        ['Nadi · SpO₂ · napas', `${num(sensorVal('hr'))} · ${num(sensorVal('spo2'))} · ${num(sensorVal('rr'))}`],
+        ['Perfusion index', num(live.perfusion_index, 2)],
+        ['Gelombang PPG', s.waveform_fs ? `${num(s.waveform_seconds)} dtk, ${num(s.waveform_fs, 1)} Hz` : 'belum diterima'],
+      ]);
+      setText('ppgHint', s.ppg.status === 'NOT_FOUND'
+        ? 'Colok node PPG dengan kabel USB data (bukan kabel daya saja), lalu tekan Pindai ulang.'
+        : s.ppg.status === 'STALE' ? 'Board tidak mengirim data. Cabut-colok kabel USB atau tekan tombol reset pada ESP32.'
+        : !s.waveform_fs ? 'Gelombang PPG untuk estimasi TD belum diterima. Flash firmware PPG terbaru (WAVEFORM_OUTPUT).' : '');
+
+      const tempVia = s.temp.via;
+      state('tempState', tempVia ? 'ok' : s.temp.status === 'STALE' ? 'warn' : 'bad',
+        tempVia ? `Terhubung (${tempVia})` : STATUS[s.temp.status]);
+      kv('tempKv', [
+        ['Port USB', s.temp.port],
+        ['Data terakhir', age(s.temp.age_s)],
+        ['Suhu', sensorVal('temp') === null ? '—' : `${num(sensorVal('temp'), 1)} °C`],
+        ['Getaran (RMS)', live.motion_g === null ? '—' : `${num(live.motion_g, 3)} g`],
+      ]);
+      setText('tempHint', tempVia === 'ESP-NOW'
+        ? 'Suhu diterima lewat node PPG. Kabel USB node suhu tidak terbaca; periksa kabelnya.'
+        : s.temp.status === 'NOT_FOUND' && !tempVia ? 'Colok node suhu dengan kabel USB data, lalu tekan Pindai ulang.'
+        : s.temp.status === 'CONNECTED' && !tempVia ? 'Board terhubung, tetapi suhu di luar 30–43 °C. Arahkan sensor ke dahi pasien.' : '');
+
+      document.getElementById('ports').replaceChildren(...(s.ports.length ? s.ports.map((p) => el('tr', { title: p.detail || '' }, [
+        el('td', { class: 'mono', text: p.port }),
+        el('td', { text: ROLE[p.role] || 'Belum dikenali' }),
+        el('td', { class: p.state === 'OPENED' ? '' : 'muted', text: PORT_STATE[p.state] || p.state }),
+        el('td', { class: 'num', text: String(p.lines) }),
+        el('td', { class: 'muted', text: age(p.age_s) }),
+      ])) : [el('tr', {}, [el('td', { colspan: '5', class: 'faint', text: 'Tidak ada port USB serial. Periksa kabel kedua board.' })])]));
+    }
+
+    async function refresh() {
+      const result = await api('/api/live');
+      if (result.ok) renderLive(result.data);
+    }
+
+    async function loadPrinter() {
+      const result = await api('/api/printer/status');
+      if (!result.ok) return;
+      const p = result.data;
+      const MODE = { none: 'Belum diatur', file: 'Simpan sebagai gambar', escpos: 'Printer ESC/POS' };
+      const device = p.device && p.device.length > 24 ? `…${p.device.slice(-22)}` : p.device;
+      kv('printerKv', [['Mode', MODE[p.backend] || p.backend], ['Perangkat', device], ['Lebar cetak', `${p.width_px} titik`]]);
+      document.getElementById('printerKv').title = p.device || '';
+      if (p.backend === 'none') {
+        state('printerState', '', 'Belum diatur');
+        setText('printerHint', 'Isi PRINTER_BACKEND dan PRINTER_DEVICE di file .env (panduan: SIREN/README_DEPLOY.md bagian B4).');
+      } else if (p.backend === 'file') {
+        state('printerState', 'warn', 'Mode file');
+        setText('printerHint', 'Label disimpan sebagai gambar PNG, tidak dicetak.');
+      } else if (p.reachable === false) {
+        state('printerState', 'bad', 'Tidak ditemukan');
+        setText('printerHint', `Tidak ada perangkat di ${p.device}. Nyalakan printer dan periksa kabel atau pairing Bluetooth.`);
+      } else {
+        state('printerState', 'ok', 'Siap');
+        setText('printerHint', '');
+      }
+    }
+
+    async function loadEvents() {
+      const result = await api('/api/sensor-events');
+      if (!result.ok) return;
+      document.getElementById('events').replaceChildren(...(result.data.items.length ? result.data.items.map((e) => el('tr', {}, [
+        el('td', { class: 'muted', text: dateTime(e.created_at) }),
+        el('td', { text: e.sensor }),
+        el('td', { text: STATUS[e.status] || e.status }),
+      ])) : [el('tr', {}, [el('td', { colspan: '3', class: 'faint', text: 'Belum ada perubahan status.' })])]));
+    }
+
+    const rescanBtn = document.getElementById('rescanBtn');
+    async function rescan() {
+      await busy(rescanBtn, async () => {
+        const result = await api('/api/sensors/rescan', { method: 'POST' });
+        if (!result.ok) { toast(`Pemindaian gagal. ${result.error}`, { type: 'error' }); return; }
+        toast(result.data.mode === 'MOCK' ? 'Mode simulasi: tidak ada port sungguhan untuk dipindai.' : 'Port dipindai ulang.', { type: 'info' });
+        refresh();
+      });
+    }
+    rescanBtn.addEventListener('click', rescan);
+    S.shortcut('R', 'Pindai ulang port', rescan);
+
+    const testBtn = document.getElementById('testPrintBtn');
+    testBtn.addEventListener('click', () => busy(testBtn, async () => {
+      const result = await api('/api/printer/test', { method: 'POST', timeout: 30000 });
+      toast(result.ok ? result.data.message : `Cetak uji gagal. ${result.error}`, { type: result.ok ? 'success' : 'error' });
+    }));
+
+    // ------------------------------------------------------- data source
+    const modeGroup = document.getElementById('modeGroup');
+    const scenarioSelect = document.getElementById('scenarioSelect');
+    let modeState = null;
+
+    function renderMode(m) {
+      modeState = m;
+      modeGroup.querySelectorAll('input').forEach((i) => { i.checked = i.value === m.mode; i.disabled = !m.can_switch; });
+      modeGroup.classList.toggle('is-locked', !m.can_switch);
+      scenarioSelect.value = m.scenario;
+      scenarioSelect.disabled = !m.can_switch;
+      document.getElementById('scenarioField').hidden = m.mode !== 'MOCK';
+      const hint = document.getElementById('modeHint');
+      if (!m.can_switch) {
+        hint.replaceChildren(`Terkunci: ada pasien aktif (${m.active_patient}). Satu pasien memakai satu sumber data sampai serah terima. `,
+          el('a', { href: '/monitor', text: 'Buka pasien' }));
+      } else {
+        hint.textContent = m.mode === 'MOCK'
+          ? 'Angka sensor dibuat program untuk demo dan ikut menentukan triase. Jangan dipakai untuk pasien sungguhan.'
+          : 'Membaca kedua ESP32 lewat USB. Input manual tetap tersedia bila sensor tidak memberi nilai.';
+      }
+    }
+
+    async function loadMode() {
+      const result = await api('/api/sensors/mode');
+      if (result.ok) renderMode(result.data);
+    }
+
+    async function switchMode(mode, scenario) {
+      const result = await api('/api/sensors/mode', { method: 'POST', body: { mode, scenario } });
+      if (!result.ok) {
+        toast(`Mode tidak diganti. ${result.error}`, { type: 'error' });
+        if (modeState) renderMode(modeState);
+        loadMode();
+        return;
+      }
+      renderMode(result.data);
+      const label = result.data.mode === 'MOCK'
+        ? `Simulasi (${result.data.scenario === 'deteriorating' ? 'pasien memburuk' : 'pasien stabil'})`
+        : 'Sensor sungguhan';
+      toast(`Sumber data: ${label}. Data sensor sebelumnya dibersihkan.`, { type: 'success' });
+      refresh();
+      loadEvents();
+    }
+
+    modeGroup.addEventListener('change', (e) => switchMode(e.target.value, scenarioSelect.value));
+    scenarioSelect.addEventListener('change', () => switchMode('MOCK', scenarioSelect.value));
+
+    loadMode();
+    setInterval(loadMode, 5000);
+    refresh(); loadPrinter(); loadEvents();
+    setInterval(refresh, 2000);
+    setInterval(loadEvents, 10000);
+    setInterval(loadPrinter, 10000);
+  })();
+</script>
+{% endblock %}

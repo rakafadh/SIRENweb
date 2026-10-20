@@ -1,0 +1,685 @@
+{% extends 'base.html' %}
+{% block title %}Pemantauan{% endblock %}
+{% block content %}
+<div class="page">
+  <div class="patient-bar">
+    <div class="patient-id">
+      <span class="code" id="pCode"></span>
+      <span class="name" id="pName"><span class="skeleton">Memuat pasien</span></span>
+      <span class="meta" id="pMeta"></span>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn btn-sm" id="printBtn">Cetak label <kbd>L</kbd></button>
+      <button type="button" class="btn btn-sm" id="handoverBtn">Serah terima <kbd>S</kbd></button>
+    </div>
+  </div>
+
+  <div class="monitor">
+    <div class="monitor-main">
+      <section class="triage" aria-label="Kategori triase">
+        <div class="triage-colour fill-none" id="tColour" aria-live="polite">
+          <span class="label">Kategori</span>
+          <span class="word" id="tWord"><span class="skeleton">MEMUAT</span></span>
+          <span class="hold" id="tHold"></span>
+        </div>
+        <div class="triage-body">
+          <dl class="facts">
+            <div class="fact"><dt>NEWS2</dt><dd class="big" id="tNews">—</dd></div>
+            <div class="fact"><dt>START (penjemputan)</dt><dd id="tStart">—</dd></div>
+            <div class="fact"><dt>Perubahan 60 dtk</dt><dd class="big" id="tDelta">—</dd></div>
+            <div class="fact"><dt>Shock index</dt><dd class="big" id="tShock">—</dd></div>
+          </dl>
+          <ul class="alerts" id="tAlerts" aria-label="Peringatan"></ul>
+        </div>
+      </section>
+
+      <div class="vitals">
+        {% for key, name, unit in [('hr', 'Nadi', '/mnt'), ('spo2', 'SpO<sub>2</sub>', '%'), ('rr', 'Laju napas', '/mnt'), ('temp', 'Suhu', '°C')] %}
+        <article class="vital is-missing" data-vital="{{ key }}">
+          <div class="vital-head"><span class="vital-name">{{ name|safe }}</span><span class="src"></span></div>
+          <div class="vital-value"><strong>—</strong><span class="unit">{{ unit }}</span></div>
+          <div class="vital-note"></div>
+        </article>
+        {% endfor %}
+        <article class="vital is-missing" id="cuffTile">
+          <div class="vital-head"><span class="vital-name">TD manset</span><span class="src">MANUAL</span></div>
+          <div class="vital-value"><strong>—</strong><span class="unit">mmHg</span></div>
+          <div class="vital-note">Belum diukur</div>
+        </article>
+        <article class="vital experimental" id="estTile">
+          <div class="vital-head"><span class="vital-name">Estimasi TD (PPG)</span><span class="src est">EKSPERIMEN</span></div>
+          <div class="vital-value"><strong>—</strong><span class="unit">mmHg</span></div>
+          <div class="vital-note">Tidak dipakai untuk triase</div>
+        </article>
+      </div>
+
+      <section class="news" aria-label="Rincian skor NEWS2">
+        <div class="news-title"><strong>NEWS2</strong>per parameter</div>
+        {% for key, label in [('respirasi', 'Napas'), ('spo2', 'SpO₂'), ('oksigen', 'O₂ tamb.'), ('sistolik', 'Sistolik'), ('nadi', 'Nadi'), ('kesadaran', 'Kesadaran'), ('suhu', 'Suhu')] %}
+        <div class="news-cell" data-part="{{ key }}"><span>{{ label }}</span><b>—</b></div>
+        {% endfor %}
+      </section>
+    </div>
+
+    <aside class="panel" aria-label="Input petugas">
+      <div class="stack">
+        <div class="field">
+          <div class="label-row"><span class="label" id="acvpuLabel">Kesadaran</span><span class="faint"><kbd>A</kbd>…<kbd>U</kbd></span></div>
+          <div class="seg danger-last" id="acvpuGroup" role="radiogroup" aria-labelledby="acvpuLabel">
+            <label title="Alert"><input type="radio" name="acvpu" value="alert" />A</label>
+            <label title="Bingung baru (confusion)"><input type="radio" name="acvpu" value="confusion" />C</label>
+            <label title="Respons suara (voice)"><input type="radio" name="acvpu" value="voice" />V</label>
+            <label title="Respons nyeri (pain)"><input type="radio" name="acvpu" value="pain" />P</label>
+            <label title="Tidak responsif"><input type="radio" name="acvpu" value="unresponsive" />U</label>
+          </div>
+        </div>
+
+        <label class="switch">
+          <span class="label">Oksigen tambahan <kbd>O</kbd></span>
+          <input type="checkbox" id="oxygenInput" /><span class="track" aria-hidden="true"></span>
+        </label>
+
+        <div class="field">
+          <div class="label-row"><span class="label" id="painLabel">Skala nyeri</span><span class="faint"><kbd>[</kbd> <kbd>]</kbd></span></div>
+          <div class="seg cols-6" id="painGroup" role="radiogroup" aria-labelledby="painLabel">
+            <label title="Belum dinilai"><input type="radio" name="pain" value="" />–</label>
+            {% for n in range(0, 11) %}<label><input type="radio" name="pain" value="{{ n }}" />{{ n }}</label>{% endfor %}
+          </div>
+        </div>
+
+        <form id="cuffForm" novalidate>
+          <div class="label-row"><span class="label">TD manset</span><span class="faint"><kbd>B</kbd></span></div>
+          <div class="cuff-row" style="margin-top:4px">
+            <label class="field"><span class="sr-only">Sistolik</span>
+              <input name="systolic" type="number" inputmode="numeric" min="40" max="300" required placeholder="Sis" data-unit="mmHg" aria-label="Sistolik (mmHg)" />
+            </label>
+            <label class="field"><span class="sr-only">Diastolik</span>
+              <input name="diastolic" type="number" inputmode="numeric" min="20" max="200" placeholder="Dia" data-unit="mmHg" aria-label="Diastolik (mmHg)" />
+            </label>
+            <button type="submit" class="btn">Simpan</button>
+          </div>
+          <div class="field"><span class="field-error" id="cuffError"></span></div>
+          <div class="form-alert" role="alert" style="margin-top:4px"></div>
+        </form>
+
+        <hr class="divider" />
+        <div class="stack-sm">
+          <button type="button" class="btn btn-sm btn-block" data-drawer="drawerManual">Vital manual <kbd>M</kbd></button>
+          <button type="button" class="btn btn-sm btn-block" data-drawer="drawerNote">Catat tindakan <kbd>T</kbd></button>
+          <button type="button" class="btn btn-sm btn-block" data-drawer="drawerIdentity">Identitas &amp; kriteria START <kbd>I</kbd></button>
+        </div>
+      </div>
+      <p class="panel-foot">Perubahan bisa diurungkan · <kbd>?</kbd> pintasan</p>
+    </aside>
+  </div>
+</div>
+{% endblock %}
+
+{% block drawers %}
+<aside class="drawer" id="drawerReady" aria-hidden="true" aria-labelledby="readyTitle" role="dialog">
+  <div class="drawer-head"><h2 id="readyTitle">Kelengkapan sebelum serah terima</h2><button type="button" class="btn btn-ghost btn-sm" data-close-drawer>Tutup <kbd>Esc</kbd></button></div>
+  <div class="drawer-body stack">
+    <p class="muted">Semua parameter NEWS2 harus punya nilai. Bila memang tidak bisa diukur, tandai dengan alasannya. Alasan akan tercatat di linimasa dan PDF serah terima.</p>
+    <ul class="checklist" id="readyList"></ul>
+  </div>
+  <div class="drawer-foot">
+    <span class="faint" id="readySummary"></span>
+    <button type="button" class="btn btn-primary" id="readyGo">Lanjut ke serah terima</button>
+  </div>
+</aside>
+
+<aside class="drawer" id="drawerManual" aria-hidden="true" aria-labelledby="manualTitle" role="dialog">
+  <div class="drawer-head"><h2 id="manualTitle">Tanda vital manual</h2><button type="button" class="btn btn-ghost btn-sm" data-close-drawer>Tutup <kbd>Esc</kbd></button></div>
+  <form id="manualForm" class="drawer-body stack" novalidate>
+    <p class="muted">Dipakai hanya bila sensor tidak memberi nilai untuk parameter itu, dan berlaku 15 menit sejak diisi. Isi yang perlu saja.</p>
+    <div class="field-row">
+      <label class="field"><span>Nadi</span><span class="with-unit"><input name="hr" type="number" step="1" min="20" max="250" data-unit="/mnt" /><span class="unit">/mnt</span></span><span class="field-error"></span></label>
+      <label class="field"><span>SpO₂</span><span class="with-unit"><input name="spo2" type="number" step="1" min="50" max="100" data-unit="%" /><span class="unit">%</span></span><span class="field-error"></span></label>
+      <label class="field"><span>Laju napas</span><span class="with-unit"><input name="rr" type="number" step="1" min="4" max="60" data-unit="/mnt" /><span class="unit">/mnt</span></span><span class="field-error"></span></label>
+      <label class="field"><span>Suhu</span><span class="with-unit"><input name="temp" type="number" step="0.1" min="25" max="45" data-unit="°C" /><span class="unit">°C</span></span><span class="field-error"></span></label>
+    </div>
+    <div class="form-alert" role="alert"></div>
+    <div>
+      <span class="label">Nilai manual yang berlaku</span>
+      <ul class="manual-list" id="manualList"></ul>
+    </div>
+  </form>
+  <div class="drawer-foot">
+    <button type="button" class="btn btn-ghost" data-close-drawer>Batal</button>
+    <button type="submit" form="manualForm" class="btn btn-primary">Simpan <kbd>Ctrl</kbd><kbd>Enter</kbd></button>
+  </div>
+</aside>
+
+<aside class="drawer" id="drawerNote" aria-hidden="true" aria-labelledby="noteTitle" role="dialog">
+  <div class="drawer-head"><h2 id="noteTitle">Catat tindakan</h2><button type="button" class="btn btn-ghost btn-sm" data-close-drawer>Tutup <kbd>Esc</kbd></button></div>
+  <form id="noteForm" class="drawer-body stack" novalidate>
+    <div class="quick" aria-label="Isian cepat">
+      {% for q in ['O₂ nasal kanul 3 L/mnt', 'O₂ masker NRM 10 L/mnt', 'Infus RL', 'Balut tekan', 'Bidai', 'Posisi recovery', 'Collar servikal'] %}
+      <button type="button" data-quick="{{ q }}">{{ q }}</button>
+      {% endfor %}
+    </div>
+    <label class="field">
+      <span>Tindakan, obat, atau catatan</span>
+      <textarea name="text" rows="3" maxlength="500" required></textarea>
+      <span class="field-error"></span>
+    </label>
+    <div class="form-alert" role="alert"></div>
+    <div>
+      <span class="label">Catatan sebelumnya</span>
+      <ul class="note-list" id="noteList"></ul>
+    </div>
+  </form>
+  <div class="drawer-foot">
+    <button type="button" class="btn btn-ghost" data-close-drawer>Batal</button>
+    <button type="submit" form="noteForm" class="btn btn-primary">Catat <kbd>Ctrl</kbd><kbd>Enter</kbd></button>
+  </div>
+</aside>
+
+<aside class="drawer" id="drawerIdentity" aria-hidden="true" aria-labelledby="identityTitle" role="dialog">
+  <div class="drawer-head"><h2 id="identityTitle">Identitas &amp; kriteria START</h2><button type="button" class="btn btn-ghost btn-sm" data-close-drawer>Tutup <kbd>Esc</kbd></button></div>
+  <form id="identityForm" class="drawer-body stack" novalidate>
+    <div class="field">
+      <span class="label">Kriteria START</span>
+      <div class="chips">
+        <label class="chip critical"><input type="checkbox" name="uncontrolled_bleeding" />Perdarahan tak terkontrol</label>
+        <label class="chip critical"><input type="checkbox" name="limb_loss_risk" />Risiko kehilangan anggota gerak</label>
+        <label class="chip"><input type="checkbox" name="chest_pain" />Nyeri dada</label>
+        <label class="chip"><input type="checkbox" name="ambulatory" />Dapat berjalan sendiri</label>
+      </div>
+      <span class="field-hint">Perubahan kriteria langsung memengaruhi kategori.</span>
+    </div>
+    <label class="field"><span>Nama</span><input name="name" maxlength="150" autocomplete="off" placeholder="Kosongkan bila belum diketahui" /><span class="field-error"></span></label>
+    <div class="field-row">
+      <label class="field"><span>Usia</span><span class="with-unit"><input name="age" type="number" min="0" max="120" data-unit="tahun" /><span class="unit">tahun</span></span><span class="field-error"></span></label>
+      <label class="field"><span>Jenis kelamin</span>
+        <select name="sex"><option value="">Belum diketahui</option><option>Laki-laki</option><option>Perempuan</option></select>
+        <span class="field-error"></span>
+      </label>
+    </div>
+    <label class="field"><span>Keluhan atau mekanisme cedera</span><textarea name="complaint" rows="2" maxlength="500"></textarea><span class="field-error"></span></label>
+    <label class="field"><span>RS tujuan</span><input name="destination" maxlength="160" autocomplete="off" /><span class="field-error"></span></label>
+    <label class="chip"><input type="checkbox" name="comorbid" />Ada komorbid</label>
+    <div class="form-alert" role="alert"></div>
+  </form>
+  <div class="drawer-foot">
+    <button type="button" class="btn btn-ghost" data-close-drawer>Batal</button>
+    <button type="submit" form="identityForm" class="btn btn-primary">Simpan <kbd>Ctrl</kbd><kbd>Enter</kbd></button>
+  </div>
+</aside>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (() => {
+    const S = SIREN;
+    const { api, num, time, elapsed, setText, el, toast, showErrors, clearErrors, checkNumbers, busy, shortcut } = S;
+    const PART_OF = { hr: 'nadi', spo2: 'spo2', rr: 'respirasi', temp: 'suhu' };
+    const DIGITS = { hr: 0, spo2: 0, rr: 0, temp: 1 };
+    const STALE_CUFF_MIN = 15;
+    let patient = null;
+    let live = null;
+
+    // ------------------------------------------------------------ render
+    function renderTriage(t) {
+      const block = document.getElementById('tColour');
+      block.className = `triage-colour fill-${S.COLOUR_CLASS[t.colour] || 'none'}`;
+      setText('tWord', t.colour);
+      // Always say why: the source of the colour, or why it is being held
+      const SOURCE_TEXT = { NEWS2: 'Dari skor NEWS2', START: 'Dari kriteria START', 'work-up': 'Usia rentan atau komorbid' };
+      setText('tHold', t.hold_remaining_s === null
+        ? (SOURCE_TEXT[t.source] || (t.source.startsWith('ΔNEWS2') ? `Memburuk: NEWS2 naik ${t.delta}` : t.source))
+        : `Ditahan. Turun ke ${t.raw_colour} bila stabil ${t.hold_remaining_s} dtk lagi.`);
+
+      const news = t.news2;
+      const newsNode = document.getElementById('tNews');
+      newsNode.replaceChildren(news.total === null ? '—' : String(news.total), el('small', { text: `${news.measured}/7 parameter` }));
+
+      const start = document.getElementById('tStart');
+      start.replaceChildren(...(t.start.colour ? [S.colourTag(t.start.colour), ` ${t.start.reason}`] : [t.start.reason || '—']));
+      start.title = t.start.reason || '';
+
+      const delta = document.getElementById('tDelta');
+      if (t.delta === null) delta.replaceChildren('—', el('small', { text: 'menunggu' }));
+      else delta.textContent = t.delta > 0 ? `+${t.delta}` : String(t.delta);
+      delta.style.color = t.delta !== null && t.delta >= 2 ? 'var(--red-fg)' : '';
+
+      const shock = document.getElementById('tShock');
+      shock.textContent = t.shock_index === null ? '—' : num(t.shock_index, 2);
+      shock.style.color = t.shock_index !== null && t.shock_index >= 0.9 ? 'var(--red-fg)' : '';
+
+      const alerts = document.getElementById('tAlerts');
+      alerts.replaceChildren(...(t.alerts.length
+        ? t.alerts.map((a) => el('li', { class: /shock|naik|perdarahan/.test(a) ? 'danger' : '', text: a }))
+        : [el('li', { class: 'quiet', text: 'Tidak ada peringatan.' })]));
+
+      document.querySelectorAll('[data-part]').forEach((cell) => {
+        const score = news.parts[cell.dataset.part];
+        cell.className = `news-cell${score ? ` s${score}` : ''}`;
+        cell.querySelector('b').textContent = score === null ? '—' : String(score);
+        cell.title = score === null ? 'Belum diukur, tidak dihitung' : `Skor ${score}`;
+      });
+    }
+
+    function sensorNote(key, data) {
+      const s = data.sensors;
+      if (key === 'temp') return s.temp.status === 'NOT_FOUND' && !s.temp.via ? 'Sensor suhu terputus' : 'Sensor suhu belum memberi nilai';
+      if (s.ppg.status !== 'CONNECTED') return 'Sensor PPG terputus';
+      if (data.finger === false) return 'Jari tidak terdeteksi';
+      if (key === 'rr') return 'Menunggu 30 dtk sinyal stabil';
+      return 'Sinyal belum stabil';
+    }
+
+    function renderVitals(data, parts) {
+      document.querySelectorAll('[data-vital]').forEach((tile) => {
+        const key = tile.dataset.vital;
+        const v = data.vitals[key];
+        const score = parts ? parts[PART_OF[key]] : null;
+        tile.querySelector('strong').textContent = num(v.value, DIGITS[key]);
+        const src = tile.querySelector('.src');
+        const info = v.source ? S.SOURCE[v.source] : null;
+        src.textContent = info ? info.text : '';
+        src.className = `src ${info ? info.cls : ''}`;
+        src.hidden = !info;
+
+        let note = '';
+        const excused = data.readiness && data.readiness.items.find((i) => i.param === key && i.state === 'excused');
+        if (v.value === null && excused) note = `Tidak dapat diukur: ${excused.reason}`;
+        else if (v.value === null) note = `${sensorNote(key, data)} · tekan M untuk isi manual`;
+        else if (v.flags.length) note = `Perlu dicek: ${v.flags.join(', ')}`;
+        else if (v.source === 'MANUAL') note = `Diisi ${Math.max(1, Math.round(v.age_s / 60))} mnt lalu`;
+        else if (key === 'temp' && v.via) note = v.via === 'USB' ? 'Dari node suhu' : 'Lewat node PPG (ESP-NOW)';
+        tile.querySelector('.vital-note').textContent = note;
+        tile.classList.toggle('is-missing', v.value === null);
+        tile.classList.toggle('is-flagged', v.flags.length > 0);
+        tile.classList.toggle('score-2', score === 2);
+        tile.classList.toggle('score-3', score === 3);
+      });
+
+      const cuff = data.cuff || {};
+      const cuffTile = document.getElementById('cuffTile');
+      const has = cuff.systolic !== null && cuff.systolic !== undefined;
+      cuffTile.querySelector('strong').textContent = !has ? '—'
+        : cuff.diastolic === null ? num(cuff.systolic) : `${num(cuff.systolic)}/${num(cuff.diastolic)}`;
+      const minutes = cuff.at ? Math.round((Date.now() - new Date(cuff.at)) / 60000) : null;
+      const old = minutes !== null && minutes >= STALE_CUFF_MIN;
+      const cuffExcused = data.readiness && data.readiness.items.find((i) => i.param === 'systolic' && i.state === 'excused');
+      cuffTile.querySelector('.vital-note').textContent = has
+        ? `Diukur ${time(cuff.at)}${old ? `, ${minutes} mnt lalu. Ukur ulang?` : ''}`
+        : cuffExcused ? `Tidak dapat diukur: ${cuffExcused.reason}` : 'Belum diukur · isi di panel kanan (B)';
+      cuffTile.classList.toggle('is-missing', !has);
+      cuffTile.classList.toggle('is-flagged', old);
+      const sysScore = parts ? parts.sistolik : null;
+      cuffTile.classList.toggle('score-2', sysScore === 2);
+      cuffTile.classList.toggle('score-3', sysScore === 3);
+
+      const est = data.bp_estimate;
+      const estTile = document.getElementById('estTile');
+      if (est) {
+        const label = est.label || {};
+        estTile.querySelector('strong').textContent = est.status === 'OK' ? `${num(est.sbp)}/${num(est.dbp)}` : '—';
+        estTile.querySelector('.vital-note').textContent = est.status === 'OK' && label.sbp_mae !== undefined
+          ? `Galat rata-rata ±${num(label.sbp_mae)}/±${num(label.dbp_mae)} · bukan triase`
+          : est.message;
+        estTile.title = [
+          'Estimasi tekanan darah dari gelombang PPG. Tidak dipakai untuk triase.',
+          label.sbp_mae !== undefined ? `Pada data uji ${label.dataset} (${label.test_subjects} subjek): rata-rata meleset ±${label.sbp_mae} mmHg sistolik, ±${label.dbp_mae} mmHg diastolik; ${label.sbp_within_10_pct}% estimasi sistolik dalam ±10 mmHg.` : '',
+          'Belum divalidasi pada sensor MAX30102; akurasi nyata kemungkinan lebih buruk.',
+        ].filter(Boolean).join('\n');
+      }
+    }
+
+    function renderPatient(p) {
+      setText('pCode', p.code);
+      setText('pName', p.display_name);
+      document.getElementById('pName').title = p.display_name;
+      renderMeta();
+    }
+
+    // ------------------------------------------------------ readiness
+    function renderReadyButton(r) {
+      const button = document.getElementById('handoverBtn');
+      button.classList.toggle('btn-primary', r.ready);
+      button.replaceChildren(r.ready ? 'Serah terima ' : `Serah terima · ${r.missing} belum lengkap `, el('kbd', { text: 'S' }));
+      button.title = r.ready ? 'Buka ringkasan serah terima' : 'Lengkapi data dulu; klik untuk melihat yang kurang';
+      const go = document.getElementById('readyGo');
+      go.disabled = !r.ready;
+      setText('readySummary', r.ready ? 'Data lengkap.' : `${r.missing} parameter belum ada nilai atau alasan.`);
+    }
+
+    const REASONS = ['Sensor tidak berfungsi', 'Alat tidak tersedia', 'Kondisi pasien tidak memungkinkan'];
+
+    function renderChecklist(r) {
+      const list = document.getElementById('readyList');
+      list.replaceChildren(...r.items.map((item) => {
+        const value = item.param === 'systolic'
+          ? (live.cuff && live.cuff.systolic !== null ? `${num(live.cuff.systolic)}/${num(live.cuff.diastolic)} mmHg` : null)
+          : (live.vitals[item.param].value !== null ? num(live.vitals[item.param].value, DIGITS[item.param]) : null);
+        const row = el('li', { class: `check-item ${item.state}` }, [
+          el('span', { class: 'check-mark', 'aria-hidden': 'true', text: item.state === 'ok' ? '✓' : item.state === 'excused' ? '–' : '!' }),
+          el('div', { class: 'check-body' }, [
+            el('strong', { text: item.label }),
+            el('span', {
+              class: 'faint',
+              text: item.state === 'ok' ? value : item.state === 'excused' ? `Tidak dapat diukur: ${item.reason}` : 'Belum ada nilai',
+            }),
+          ]),
+        ]);
+        const actions = el('div', { class: 'check-actions' });
+        if (item.state === 'missing') {
+          if (item.param === 'systolic') {
+            actions.append(el('button', { type: 'button', class: 'btn btn-sm', text: 'Isi TD manset', onclick: () => { S.closeDrawer(); cuffForm.elements.systolic.focus(); } }));
+          } else {
+            actions.append(el('button', { type: 'button', class: 'btn btn-sm', text: 'Isi manual', onclick: () => openManual(item.param) }));
+          }
+          actions.append(el('button', { type: 'button', class: 'btn btn-sm btn-ghost', text: 'Tidak dapat diukur…', onclick: () => showReasonForm(row, item) }));
+        } else if (item.state === 'excused') {
+          actions.append(el('button', { type: 'button', class: 'btn btn-sm btn-ghost', text: 'Cabut', onclick: () => excuse(item, null) }));
+        }
+        row.append(actions);
+        return row;
+      }));
+    }
+
+    function showReasonForm(row, item) {
+      row.querySelector('.reason-form')?.remove();
+      const input = el('input', { name: 'reason', maxlength: '200', placeholder: 'Alasan, misalnya: termometer rusak', autocomplete: 'off' });
+      const error = el('span', { class: 'field-error' });
+      const form = el('form', { class: 'reason-form', novalidate: true }, [
+        el('div', { class: 'quick' }, REASONS.map((r) => el('button', { type: 'button', text: r, onclick: () => { input.value = r; input.focus(); } }))),
+        el('div', { class: 'cuff-row', style: 'grid-template-columns: 1fr auto' }, [
+          el('label', { class: 'field' }, [el('span', { class: 'sr-only', text: 'Alasan' }), input, error]),
+          el('button', { type: 'submit', class: 'btn btn-sm btn-primary', text: 'Simpan alasan' }),
+        ]),
+      ]);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const reason = input.value.trim();
+        if (reason.length < 3) {
+          input.setAttribute('aria-invalid', 'true');
+          error.textContent = 'Tulis alasan minimal 3 karakter.';
+          input.focus();
+          return;
+        }
+        const result = await excuse(item, reason);
+        if (!result.ok) {
+          input.setAttribute('aria-invalid', 'true');
+          error.textContent = result.fields.reason || result.error;
+        }
+      });
+      row.append(form);
+      input.focus();
+    }
+
+    async function excuse(item, reason) {
+      const result = await api(`/api/patients/${patient.id}/unmeasured`, { method: 'POST', body: { param: item.param, reason } });
+      if (!result.ok) {
+        if (reason === null) toast(`Gagal mencabut. ${result.error}`, { type: 'error' });
+        return result;
+      }
+      render(result.data.live);
+      renderChecklist(result.data.live.readiness);
+      toast(reason ? `${item.label} ditandai tidak dapat diukur.` : `Tanda "tidak dapat diukur" untuk ${item.label} dicabut.`, { type: 'success' });
+      return result;
+    }
+
+    function openManual(param) {
+      S.openDrawer('drawerManual');
+      setTimeout(() => manualForm.elements[param]?.focus(), 120);
+    }
+
+    function goHandover() {
+      if (!live) return;
+      if (live.readiness.ready) {
+        window.location.href = `/patients/${patient.id}`;
+        return;
+      }
+      renderChecklist(live.readiness);
+      S.openDrawer('drawerReady');
+    }
+    document.getElementById('handoverBtn').addEventListener('click', goHandover);
+    document.getElementById('readyGo').addEventListener('click', goHandover);
+    document.getElementById('drawerReady').addEventListener('drawer:open', () => renderChecklist(live.readiness));
+    function renderMeta() {
+      if (!patient) return;
+      const p = patient;
+      const who = [p.age !== null ? `${p.age} th` : null, p.sex === 'Laki-laki' ? 'L' : p.sex === 'Perempuan' ? 'P' : null].filter(Boolean).join(' ');
+      const parts = [who, `dipantau ${elapsed(p.created_at)}`, p.destination ? `ke ${p.destination}` : 'RS tujuan belum diisi'];
+      setText('pMeta', parts.filter(Boolean).join(' · '));
+    }
+
+    // Inputs mirror the server only on load and after a save, never while
+    // polling, so nothing is overwritten while the nurse is typing.
+    function fillInputs(p) {
+      document.querySelectorAll('#acvpuGroup input').forEach((i) => { i.checked = i.value === p.acvpu; });
+      document.getElementById('oxygenInput').checked = p.on_oxygen;
+      const pain = p.pain === null ? '' : String(p.pain);
+      document.querySelectorAll('#painGroup input').forEach((i) => { i.checked = i.value === pain; });
+      const cuff = document.getElementById('cuffForm').elements;
+      cuff.systolic.value = p.systolic ?? '';
+      cuff.diastolic.value = p.diastolic ?? '';
+    }
+
+    function render(data) {
+      if (!data.patient) {
+        toast('Tidak ada pasien aktif. Membuka halaman pasien baru.', { type: 'info' });
+        setTimeout(() => { window.location.href = '/start'; }, 800);
+        return;
+      }
+      live = data;
+      const first = !patient;
+      patient = data.patient;
+      if (first) fillInputs(patient);
+      renderPatient(patient);
+      renderTriage(data.triage);
+      renderVitals(data, data.triage.news2.parts);
+      renderReadyButton(data.readiness);
+      // Keep an open checklist current, unless a reason is being typed
+      const drawer = document.getElementById('drawerReady');
+      if (drawer.classList.contains('open') && !drawer.querySelector('.reason-form')) renderChecklist(data.readiness);
+    }
+
+    async function refresh() {
+      const result = await api('/api/live');
+      if (result.ok) render(result.data);
+    }
+
+    // ------------------------------------------------------------ inputs
+    const LABEL = {
+      acvpu: (v) => `Kesadaran: ${S.ACVPU[v]}`,
+      on_oxygen: (v) => (v ? 'Oksigen tambahan: ya' : 'Oksigen tambahan: tidak'),
+      pain: (v) => `Skala nyeri: ${v === null ? 'belum dinilai' : `${v}/10`}`,
+    };
+
+    // Save one change; offer to undo it, because a stray key press in a moving
+    // ambulance must not silently change the category.
+    async function change(field, value, { isUndo = false } = {}) {
+      const previous = patient[field];
+      if (previous === value) return;
+      const path = `/api/patients/${patient.id}${isUndo ? '?undo=true' : ''}`;
+      const result = await api(path, { method: 'PATCH', body: { [field]: value } });
+      if (!result.ok) {
+        toast(`Gagal menyimpan. ${result.error}`, { type: 'error' });
+        fillInputs(patient);
+        return;
+      }
+      render(result.data.live);
+      fillInputs(result.data.live.patient);
+      toast(`${LABEL[field](value)}. Kategori: ${result.data.live.triage.colour}.`, {
+        type: 'success',
+        timeout: 6000,
+        action: isUndo ? null : { label: 'Urungkan', onClick: () => change(field, previous, { isUndo: true }) },
+      });
+    }
+
+    document.getElementById('acvpuGroup').addEventListener('change', (e) => change('acvpu', e.target.value));
+    document.getElementById('painGroup').addEventListener('change', (e) => change('pain', e.target.value === '' ? null : Number(e.target.value)));
+    document.getElementById('oxygenInput').addEventListener('change', (e) => change('on_oxygen', e.target.checked));
+
+    const cuffForm = document.getElementById('cuffForm');
+    cuffForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearErrors(cuffForm);
+      const f = cuffForm.elements;
+      const fields = checkNumbers(cuffForm);
+      const sys = f.systolic.value === '' ? null : Number(f.systolic.value);
+      const dia = f.diastolic.value === '' ? null : Number(f.diastolic.value);
+      if (sys !== null && dia !== null && dia >= sys) fields.diastolic = 'Diastolik harus lebih rendah dari sistolik.';
+      if (Object.keys(fields).length) {
+        // Both inputs share one error line in this compact row
+        Object.keys(fields).forEach((name) => f[name].setAttribute('aria-invalid', 'true'));
+        setText('cuffError', Object.values(fields).join(' '));
+        f[Object.keys(fields)[0]].focus();
+        return;
+      }
+      const button = cuffForm.querySelector('button[type="submit"]');
+      await busy(button, async () => {
+        const result = await api(`/api/patients/${patient.id}`, { method: 'PATCH', body: { systolic: sys, diastolic: dia } });
+        if (!result.ok) {
+          Object.keys(result.fields).forEach((name) => f[name]?.setAttribute('aria-invalid', 'true'));
+          setText('cuffError', Object.values(result.fields).join(' ') || result.error);
+          return;
+        }
+        render(result.data.live);
+        fillInputs(result.data.live.patient);
+        toast(`TD manset ${sys}${dia !== null ? `/${dia}` : ''} mmHg tersimpan.`, { type: 'success' });
+      });
+    });
+    cuffForm.addEventListener('input', () => { clearErrors(cuffForm); setText('cuffError', ''); });
+
+    // ----------------------------------------------------------- drawers
+    document.querySelectorAll('[data-drawer]').forEach((b) => b.addEventListener('click', () => S.openDrawer(b.dataset.drawer)));
+
+    const manualForm = document.getElementById('manualForm');
+    const MANUAL_LABEL = { hr: ['Nadi', '/mnt', 0], spo2: ['SpO₂', '%', 0], rr: ['Laju napas', '/mnt', 0], temp: ['Suhu', '°C', 1] };
+    function renderManualList() {
+      const list = document.getElementById('manualList');
+      const entries = Object.entries((live && live.manual) || {});
+      list.replaceChildren(...(entries.length ? entries.map(([key, m]) => el('li', {}, [
+        el('span', { text: `${MANUAL_LABEL[key][0]} ${num(m.value, MANUAL_LABEL[key][2])} ${MANUAL_LABEL[key][1]}` }),
+        el('span', {
+          class: 'faint',
+          text: `${Math.max(1, Math.round(m.age_s / 60))} mnt lalu${live.vitals[key].source === 'MANUAL' ? '' : ' · tidak dipakai, sensor aktif'}`,
+        }),
+        el('button', { type: 'button', class: 'btn btn-sm btn-ghost', text: 'Hapus', onclick: () => saveManual({ [key]: null }, `${MANUAL_LABEL[key][0]} manual dihapus.`) }),
+      ])) : [el('li', { class: 'faint', text: 'Belum ada.' })]));
+    }
+    async function saveManual(body, message) {
+      const result = await api(`/api/patients/${patient.id}/manual-vitals`, { method: 'POST', body });
+      if (!result.ok) {
+        showErrors(manualForm, result);
+        return false;
+      }
+      render(result.data.live);
+      renderManualList();
+      toast(message, { type: 'success' });
+      return true;
+    }
+    document.getElementById('drawerManual').addEventListener('drawer:open', () => { clearErrors(manualForm); renderManualList(); });
+    manualForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearErrors(manualForm);
+      const fields = checkNumbers(manualForm);
+      if (Object.keys(fields).length) { showErrors(manualForm, { fields }); return; }
+      const body = {};
+      ['hr', 'spo2', 'rr', 'temp'].forEach((k) => { if (manualForm.elements[k].value !== '') body[k] = Number(manualForm.elements[k].value); });
+      if (!Object.keys(body).length) {
+        showErrors(manualForm, { fields: {}, error: 'Isi minimal satu tanda vital.' });
+        return;
+      }
+      if (await saveManual(body, 'Tanda vital manual tersimpan.')) {
+        manualForm.reset();
+        S.closeDrawer();
+      }
+    });
+
+    const noteForm = document.getElementById('noteForm');
+    async function loadNotes() {
+      const result = await api(`/api/patients/${patient.id}`);
+      const list = document.getElementById('noteList');
+      if (!result.ok) { list.replaceChildren(el('li', { class: 'faint', text: result.error })); return; }
+      const notes = result.data.events.filter((e) => e.kind === 'TINDAKAN').reverse();
+      list.replaceChildren(...(notes.length ? notes.map((n) => el('li', {}, [el('time', { text: time(n.created_at) }), el('span', { text: n.detail })]))
+        : [el('li', { class: 'faint', text: 'Belum ada catatan.' })]));
+    }
+    document.getElementById('drawerNote').addEventListener('drawer:open', () => { clearErrors(noteForm); loadNotes(); });
+    noteForm.querySelectorAll('[data-quick]').forEach((b) => b.addEventListener('click', () => {
+      const area = noteForm.elements.text;
+      area.value = area.value.trim() ? `${area.value.trim()}; ${b.dataset.quick}` : b.dataset.quick;
+      area.focus();
+    }));
+    noteForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = noteForm.elements.text.value.trim();
+      if (!text) { showErrors(noteForm, { fields: { text: 'Tulis tindakan atau catatan terlebih dahulu.' } }); return; }
+      const result = await api(`/api/patients/${patient.id}/notes`, { method: 'POST', body: { text } });
+      if (!result.ok) { showErrors(noteForm, result); return; }
+      noteForm.reset();
+      S.closeDrawer();
+      toast(`Dicatat pukul ${time(new Date().toISOString())}.`, { type: 'success' });
+    });
+
+    const identityForm = document.getElementById('identityForm');
+    document.getElementById('drawerIdentity').addEventListener('drawer:open', () => {
+      clearErrors(identityForm);
+      const f = identityForm.elements;
+      ['uncontrolled_bleeding', 'limb_loss_risk', 'chest_pain', 'ambulatory', 'comorbid'].forEach((k) => { f[k].checked = Boolean(patient[k]); });
+      ['name', 'age', 'sex', 'complaint', 'destination'].forEach((k) => { f[k].value = patient[k] ?? ''; });
+    });
+    identityForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearErrors(identityForm);
+      const fields = checkNumbers(identityForm);
+      if (Object.keys(fields).length) { showErrors(identityForm, { fields }); return; }
+      const f = identityForm.elements;
+      const text = (k) => (f[k].value.trim() === '' ? null : f[k].value.trim());
+      const body = { name: text('name'), age: text('age') === null ? null : Number(text('age')), sex: text('sex'), complaint: text('complaint'), destination: text('destination') };
+      ['uncontrolled_bleeding', 'limb_loss_risk', 'chest_pain', 'ambulatory', 'comorbid'].forEach((k) => { body[k] = f[k].checked; });
+      const result = await api(`/api/patients/${patient.id}`, { method: 'PATCH', body });
+      if (!result.ok) { showErrors(identityForm, result); return; }
+      render(result.data.live);
+      S.closeDrawer();
+      toast(result.data.changes.length ? `Tersimpan: ${result.data.changes.length} perubahan.` : 'Tidak ada yang berubah.', { type: 'success' });
+    });
+
+    // ------------------------------------------------------------- print
+    const printBtn = document.getElementById('printBtn');
+    async function printLabel() {
+      await busy(printBtn, async () => {
+        const result = await api(`/api/patients/${patient.id}/print-label`, { method: 'POST', timeout: 30000 });
+        toast(result.ok ? result.data.message : `Label tidak tercetak. ${result.error}`, { type: result.ok ? 'success' : 'error' });
+      });
+    }
+    printBtn.addEventListener('click', printLabel);
+
+    // --------------------------------------------------------- shortcuts
+    [['A', 'alert'], ['C', 'confusion'], ['V', 'voice'], ['P', 'pain'], ['U', 'unresponsive']].forEach(([key, value]) => {
+      shortcut(key, `Kesadaran: ${S.ACVPU[value]}`, () => change('acvpu', value));
+    });
+    shortcut('O', 'Oksigen tambahan ya/tidak', () => change('on_oxygen', !patient.on_oxygen));
+    shortcut('[', 'Skala nyeri turun', () => change('pain', patient.pain === null ? 0 : Math.max(0, patient.pain - 1)));
+    shortcut(']', 'Skala nyeri naik', () => change('pain', patient.pain === null ? 1 : Math.min(10, patient.pain + 1)));
+    shortcut('B', 'Isi TD manset', () => cuffForm.elements.systolic.focus());
+    shortcut('M', 'Vital manual', () => S.openDrawer('drawerManual'));
+    shortcut('T', 'Catat tindakan', () => S.openDrawer('drawerNote'));
+    shortcut('I', 'Identitas & kriteria START', () => S.openDrawer('drawerIdentity'));
+    shortcut('L', 'Cetak label', printLabel);
+    shortcut('S', 'Serah terima (atau daftar yang belum lengkap)', goHandover);
+    shortcut('Ctrl+Enter', 'Simpan panel yang terbuka', () => {
+      const open = document.querySelector('.drawer.open form');
+      if (open) open.requestSubmit();
+    }, { inInputs: true });
+
+    refresh().then(() => {
+      setInterval(refresh, 2000);
+      setInterval(renderMeta, 1000);
+      // Sent back here because handover was opened with data missing
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('blocked') && live) {
+        history.replaceState(null, '', window.location.pathname);
+        toast('Serah terima belum bisa dibuka: data belum lengkap.', { type: 'warn' });
+        goHandover();
+      }
+    });
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="SIREN: triase dan pemantauan pasien di dalam ambulans, berjalan offline." />
+    <title>{% block title %}SIREN{% endblock %} · SIREN</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23151a1d'/%3E%3Cpath d='M6 17h5l3-7 4 13 3-6h5' fill='none' stroke='%235eb0c0' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <script>
+      // Set the theme before CSS paints, so the screen never flashes white at night.
+      try {
+        const asked = new URLSearchParams(location.search).get('theme');
+        document.documentElement.dataset.theme = ['dark', 'light'].includes(asked) ? asked : (localStorage.getItem('siren_theme') || 'dark');
+      } catch (e) { /* default dark */ }
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Lewati ke konten</a>
+    <div class="app">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="SIREN, ke pasien aktif">
+          <span class="brand-name">SIREN</span>
+          <span class="brand-unit">{{ ambulance_id }}</span>
+        </a>
+        <nav class="nav" aria-label="Navigasi utama">
+          <a href="/" {% if nav in ('monitor', 'start') %}aria-current="page"{% endif %}>Pasien</a>
+          <a href="/history" {% if nav == 'history' %}aria-current="page"{% endif %}>Riwayat</a>
+          <a href="/sensors" {% if nav == 'sensors' %}aria-current="page"{% endif %}>Perangkat</a>
+        </nav>
+        <div class="topbar-right">
+          <div class="sys-status" aria-label="Status perangkat">
+            <span id="sysPpg" title="Memeriksa sensor PPG"><i class="dot"></i><span class="txt">PPG</span></span>
+            <span id="sysTemp" title="Memeriksa sensor suhu"><i class="dot"></i><span class="txt">Suhu</span></span>
+            <span id="sysPrinter" title="Memeriksa printer"><i class="dot"></i><span class="txt">Printer</span></span>
+          </div>
+          <a href="/sensors" class="sim-badge{% if not mock_mode %} hidden{% endif %}" id="simBadge" title="Data sensor dibuat program, bukan dari pasien. Ganti di menu Perangkat.">SIMULASI</a>
+          <button type="button" class="btn btn-ghost btn-sm" id="themeBtn">Tema terang</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="helpBtn" aria-label="Pintasan keyboard"><kbd>?</kbd></button>
+          <time class="clock" id="clock"></time>
+        </div>
+      </header>
+
+      <div id="connBanner" class="conn-banner hidden" role="alert">
+        <strong>Koneksi ke server SIREN terputus.</strong>
+        <span>Data di layar terakhir diperbarui pukul <span id="connSince">—</span> dan mungkin sudah tidak terbaru. Mencoba menyambung lagi…</span>
+      </div>
+
+      <main id="main" class="main">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+
+    <div id="backdrop" class="backdrop"></div>
+    {% block drawers %}{% endblock %}
+
+    <dialog id="helpDialog" class="dialog" aria-labelledby="helpTitle">
+      <div class="drawer-head">
+        <h2 id="helpTitle">Pintasan keyboard</h2>
+        <button type="button" class="btn btn-ghost btn-sm" data-close-dialog>Tutup</button>
+      </div>
+      <div class="drawer-body">
+        <dl class="shortcut-list"></dl>
+      </div>
+    </dialog>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+
+    <script src="{{ url_for('static', path='js/app.js') }}"></script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

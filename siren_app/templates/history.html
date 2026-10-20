@@ -1,0 +1,97 @@
+{% extends 'base.html' %}
+{% block title %}Riwayat{% endblock %}
+{% block content %}
+<div class="page">
+  <div class="page-head">
+    <h2>Riwayat pasien</h2>
+    <span class="faint" id="count"></span>
+    <span class="spacer"></span>
+    <label class="field" style="width:260px">
+      <span class="sr-only">Cari</span>
+      <input id="search" type="search" placeholder="Cari nama, kode, atau RS tujuan" autocomplete="off" />
+    </label>
+    <button type="button" class="btn btn-sm" id="exportPatients">Ekspor pasien (CSV)</button>
+    <button type="button" class="btn btn-sm" id="exportReadings">Ekspor pembacaan (CSV)</button>
+  </div>
+
+  <div class="table-wrap" style="max-height: calc(100dvh - 120px)">
+    <table class="table">
+      <thead><tr><th>Kode</th><th>Nama</th><th>Mulai</th><th>Lama</th><th>Status</th><th>Kategori terakhir</th><th class="num">NEWS2</th><th>RS tujuan</th></tr></thead>
+      <tbody id="rows">
+        {% for _ in range(4) %}<tr><td colspan="8"><span class="skeleton" style="width:100%">memuat</span></td></tr>{% endfor %}
+      </tbody>
+    </table>
+    <div id="empty" class="empty hidden"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (() => {
+    const S = SIREN;
+    const { api, dateTime, el, setText } = S;
+    const rows = document.getElementById('rows');
+    const empty = document.getElementById('empty');
+    const search = document.getElementById('search');
+    let items = [];
+
+    function duration(p) {
+      const end = p.handed_over_at ? new Date(p.handed_over_at) : new Date();
+      const min = Math.max(0, Math.round((end - new Date(p.created_at)) / 60000));
+      return min < 60 ? `${min} mnt` : `${Math.floor(min / 60)} j ${min % 60} mnt`;
+    }
+
+    function showEmpty(title, text, action) {
+      rows.replaceChildren();
+      empty.replaceChildren(el('h3', { text: title }), el('p', { text }), action || '');
+      empty.classList.remove('hidden');
+    }
+
+    function render() {
+      const q = search.value.trim().toLowerCase();
+      const shown = items.filter((p) => !q || [p.code, p.display_name, p.destination].some((v) => (v || '').toLowerCase().includes(q)));
+      setText('count', items.length ? `${items.length} pasien` : '');
+      if (!items.length) {
+        showEmpty('Belum ada pasien', 'Pasien yang dipantau akan muncul di sini beserta ringkasan serah terimanya.',
+          el('a', { class: 'btn btn-primary', href: '/start', text: 'Mulai pasien baru' }));
+        return;
+      }
+      if (!shown.length) {
+        showEmpty('Tidak ada yang cocok', `Tidak ada pasien dengan kode, nama, atau RS tujuan berisi "${search.value.trim()}".`);
+        return;
+      }
+      empty.classList.add('hidden');
+      rows.replaceChildren(...shown.map((p) => {
+        const open = () => { window.location.href = `/patients/${p.id}`; };
+        return el('tr', { class: 'clickable', onclick: open }, [
+          el('td', {}, [el('a', { href: `/patients/${p.id}`, class: 'mono', text: p.code })]),
+          el('td', { text: p.display_name }),
+          el('td', { text: dateTime(p.created_at) }),
+          el('td', { class: 'muted', text: duration(p) }),
+          el('td', {}, [p.status === 'ACTIVE' ? el('span', { class: 'tag outline', text: 'DIPANTAU' }) : el('span', { class: 'muted', text: 'Diserahterimakan' })]),
+          el('td', {}, [S.colourTag(p.latest_colour)]),
+          el('td', { class: 'num', text: p.latest_news2 ?? '—' }),
+          el('td', { class: 'muted', text: p.destination || '—' }),
+        ]);
+      }));
+    }
+
+    search.addEventListener('input', render);
+    document.getElementById('exportPatients').addEventListener('click', (e) => S.download('/api/export/patients.csv', 'siren-pasien.csv', e.currentTarget));
+    document.getElementById('exportReadings').addEventListener('click', (e) => S.download('/api/export/readings.csv', 'siren-pembacaan.csv', e.currentTarget));
+    S.shortcut('/', 'Cari pasien', () => search.focus());
+
+    (async () => {
+      const result = await api('/api/patients');
+      if (!result.ok) {
+        showEmpty('Riwayat tidak dapat dimuat', result.error,
+          el('button', { class: 'btn', type: 'button', text: 'Coba lagi', onclick: () => window.location.reload() }));
+        return;
+      }
+      items = result.data.items;
+      render();
+    })();
+  })();
+</script>
+{% endblock %}

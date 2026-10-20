@@ -1,0 +1,180 @@
+{% extends 'base.html' %}
+{% block title %}Pasien baru{% endblock %}
+{% block content %}
+<form id="startForm" class="page" novalidate>
+  <div class="page-head">
+    <h2>Pasien baru</h2>
+    {% if mock_mode %}
+    <span class="mode-warning" role="note">Sumber sensor: SIMULASI · <a href="/sensors">ganti di Perangkat</a></span>
+    {% else %}
+    <span class="faint">Penilaian dulu, identitas boleh dilengkapi selama perjalanan.</span>
+    {% endif %}
+    <span class="spacer"></span>
+    <button type="submit" class="btn btn-primary" id="submitBtn">Mulai pemantauan <kbd>Ctrl</kbd><kbd>Enter</kbd></button>
+  </div>
+  <div class="form-alert" role="alert" style="margin-bottom:10px"></div>
+
+  <div class="start-grid">
+    <section class="card stack" aria-labelledby="assessTitle">
+      <div class="card-title"><h3 id="assessTitle">Penilaian saat penjemputan</h3></div>
+
+      <div class="field">
+        <div class="label-row"><span class="label" id="acvpuLabel">Kesadaran (ACVPU)</span><span class="faint"><kbd>A</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>P</kbd> <kbd>U</kbd></span></div>
+        <div class="seg tall danger-last" role="radiogroup" aria-labelledby="acvpuLabel">
+          <label><input type="radio" name="acvpu" value="alert" checked /><b>A</b><span class="seg-sub">Alert</span></label>
+          <label><input type="radio" name="acvpu" value="confusion" /><b>C</b><span class="seg-sub">Bingung baru</span></label>
+          <label><input type="radio" name="acvpu" value="voice" /><b>V</b><span class="seg-sub">Respons suara</span></label>
+          <label><input type="radio" name="acvpu" value="pain" /><b>P</b><span class="seg-sub">Respons nyeri</span></label>
+          <label><input type="radio" name="acvpu" value="unresponsive" /><b>U</b><span class="seg-sub">Tidak respons</span></label>
+        </div>
+        <span class="field-error"></span>
+      </div>
+
+      <div class="field">
+        <span class="label">Kriteria START</span>
+        <div class="chips">
+          <label class="chip critical"><input type="checkbox" name="uncontrolled_bleeding" />Perdarahan tak terkontrol</label>
+          <label class="chip critical"><input type="checkbox" name="limb_loss_risk" />Risiko kehilangan anggota gerak</label>
+          <label class="chip"><input type="checkbox" name="chest_pain" />Nyeri dada</label>
+          <label class="chip"><input type="checkbox" name="ambulatory" />Dapat berjalan sendiri</label>
+        </div>
+      </div>
+
+      <label class="switch">
+        <span><span class="label">Mendapat oksigen tambahan</span> <span class="faint">(+2 NEWS2)</span></span>
+        <input type="checkbox" name="on_oxygen" /><span class="track" aria-hidden="true"></span>
+      </label>
+
+      <div class="field">
+        <span class="label" id="painLabel">Skala nyeri</span>
+        <div class="seg cols-6" role="radiogroup" aria-labelledby="painLabel">
+          <label title="Belum dinilai"><input type="radio" name="pain" value="" checked />–</label>
+          {% for n in range(0, 11) %}<label><input type="radio" name="pain" value="{{ n }}" />{{ n }}</label>{% endfor %}
+        </div>
+        <span class="field-error"></span>
+      </div>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Sistolik manset (opsional)</span>
+          <span class="with-unit"><input name="systolic" type="number" inputmode="numeric" min="40" max="300" data-unit="mmHg" /><span class="unit">mmHg</span></span>
+          <span class="field-error"></span>
+        </label>
+        <label class="field">
+          <span>Diastolik manset</span>
+          <span class="with-unit"><input name="diastolic" type="number" inputmode="numeric" min="20" max="200" data-unit="mmHg" /><span class="unit">mmHg</span></span>
+          <span class="field-error"></span>
+        </label>
+      </div>
+    </section>
+
+    <section class="card stack" aria-labelledby="idTitle">
+      <div class="card-title"><h3 id="idTitle">Identitas</h3><span class="faint">boleh menyusul</span></div>
+      <label class="field">
+        <span>Nama</span>
+        <input name="name" maxlength="150" autocomplete="off" placeholder="Kosongkan bila belum diketahui" />
+        <span class="field-error"></span>
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>Usia (perkiraan boleh)</span>
+          <span class="with-unit"><input name="age" type="number" inputmode="numeric" min="0" max="120" data-unit="tahun" /><span class="unit">tahun</span></span>
+          <span class="field-error"></span>
+        </label>
+        <label class="field">
+          <span>Jenis kelamin</span>
+          <select name="sex">
+            <option value="">Belum diketahui</option>
+            <option>Laki-laki</option>
+            <option>Perempuan</option>
+          </select>
+          <span class="field-error"></span>
+        </label>
+      </div>
+      <label class="field">
+        <span>Keluhan atau mekanisme cedera</span>
+        <textarea name="complaint" rows="2" maxlength="500"></textarea>
+        <span class="field-error"></span>
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>RS tujuan</span>
+          <input name="destination" list="destinationList" maxlength="160" autocomplete="off" />
+          <span class="field-error"></span>
+        </label>
+        <label class="field">
+          <span>Petugas</span>
+          <input name="crew" maxlength="120" autocomplete="off" />
+          <span class="field-error"></span>
+        </label>
+      </div>
+      <label class="chip"><input type="checkbox" name="comorbid" />Ada komorbid</label>
+      <datalist id="destinationList">{% for d in destinations %}<option value="{{ d }}"></option>{% endfor %}</datalist>
+    </section>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (() => {
+    const { api, showErrors, clearErrors, checkNumbers, busy, shortcut } = SIREN;
+    const form = document.getElementById('startForm');
+    const button = document.getElementById('submitBtn');
+
+    // The crew rarely changes between patients: remember it on this device only.
+    try { const crew = localStorage.getItem('siren_crew'); if (crew) form.elements.crew.value = crew; } catch (e) { /* ignore */ }
+
+    const text = (name) => { const v = form.elements[name].value.trim(); return v === '' ? null : v; };
+    const number = (name) => { const v = text(name); return v === null ? null : Number(v); };
+
+    async function submit() {
+      clearErrors(form);
+      const fields = checkNumbers(form);
+      const sys = number('systolic');
+      const dia = number('diastolic');
+      if (dia !== null && sys === null) fields.systolic = 'Isi sistolik bersama diastolik.';
+      if (sys !== null && dia !== null && dia >= sys) fields.diastolic = 'Diastolik harus lebih rendah dari sistolik.';
+      if (Object.keys(fields).length) {
+        showErrors(form, { fields });
+        return;
+      }
+      const body = {
+        acvpu: form.elements.acvpu.value, pain: number('pain'), systolic: sys, diastolic: dia,
+        name: text('name'), age: number('age'), sex: text('sex'), complaint: text('complaint'),
+        destination: text('destination'), crew: text('crew'),
+      };
+      ['uncontrolled_bleeding', 'limb_loss_risk', 'chest_pain', 'ambulatory', 'on_oxygen', 'comorbid']
+        .forEach((name) => { body[name] = form.elements[name].checked; });
+
+      await busy(button, async () => {
+        const result = await api('/api/patients', { method: 'POST', body });
+        if (!result.ok) {
+          showErrors(form, result);
+          if (result.status === 409) form.querySelector('.form-alert').append(' Buka menu Pasien untuk melanjutkan pasien aktif.');
+          return;
+        }
+        try { if (body.crew) localStorage.setItem('siren_crew', body.crew); } catch (e) { /* ignore */ }
+        window.location.href = '/monitor';
+      });
+    }
+
+    form.addEventListener('submit', (e) => { e.preventDefault(); submit(); });
+    form.addEventListener('input', (e) => {
+      // Clear a field's error as soon as it is edited
+      if (e.target.getAttribute('aria-invalid') === 'true') {
+        e.target.removeAttribute('aria-invalid');
+        const slot = e.target.closest('.field')?.querySelector('.field-error');
+        if (slot) slot.textContent = '';
+      }
+    });
+
+    shortcut('Ctrl+Enter', 'Mulai pemantauan', submit, { inInputs: true });
+    [['A', 'alert'], ['C', 'confusion'], ['V', 'voice'], ['P', 'pain'], ['U', 'unresponsive']].forEach(([key, value]) => {
+      shortcut(key, `Kesadaran: ${SIREN.ACVPU[value]}`, () => {
+        form.querySelector(`input[name="acvpu"][value="${value}"]`).checked = true;
+      });
+    });
+  })();
+</script>
+{% endblock %}

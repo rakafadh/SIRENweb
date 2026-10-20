@@ -1,0 +1,21 @@
+fastapi==0.111.1
+uvicorn==0.30.1
+jinja2==3.1.5
+sqlalchemy==2.0.32
+pyserial==3.5
+python-dotenv==1.0.1
+pydantic==2.8.2
+python-multipart==0.0.9
+joblib==1.4.2
+numpy==2.2.0
+scikit-learn==1.5.2
+fpdf2==2.8.9
+qrcode==8.0
+# Pillow comes with fpdf2; the label needs ImageFont.load_default(size=)
+pillow>=10.1
+
+# tests
+pytest==8.3.2
+httpx==0.28.1
+# optional: lets tests/test_label_printer.py decode the printed QR
+# opencv-python-headless

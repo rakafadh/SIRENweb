@@ -1,0 +1,16 @@
+# Installed by deploy/install.sh, which fills in __USER__ and __APP_DIR__.
+[Unit]
+Description=SIREN ambulance triage server
+After=local-fs.target
+
+[Service]
+User=__USER__
+SupplementaryGroups=dialout lp
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
