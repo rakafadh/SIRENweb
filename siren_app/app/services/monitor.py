@@ -25,6 +25,7 @@ from app.models import Patient, PatientEvent, TriageResult, VitalReading
 from app.services import triage as TR
 from app.services import triage_policy as policy
 from app.services.bp_service import WINDOW_S, BloodPressureEstimator, BpEstimate
+from app.services.deterioration_alerts import Alert, DeteriorationWatch
 from app.services.sensor_service import SensorManager
 
 log = logging.getLogger("siren.monitor")
@@ -83,6 +84,7 @@ class Monitor:
         # (time, NEWS2 parts) per evaluation, for the comparable delta
         self.history: deque[tuple[float, dict]] = deque(maxlen=HISTORY_KEEP_S * 2)
         self.hold = policy.ColourHold()
+        self.watch = DeteriorationWatch()   # alerts the crew when the patient gets worse
         self.clock = time.time   # tests replace this to move time forward
         self.manual: dict[str, tuple[float, float]] = {}   # param -> (value, epoch seconds)
         self.unmeasured: dict[str, dict[str, str]] = {}    # param -> {"reason", "at"}
@@ -189,6 +191,7 @@ class Monitor:
                 while self.history and now - self.history[0][0] > HISTORY_KEEP_S:
                     self.history.popleft()
                 shown = self.hold.update(now, result.colour)
+                alert = self.watch.update(now, result.news.parts, shown.colour, result.news.total, result.news.measured)
 
                 bp = self._bp_estimate(vitals)
                 colour = COLOUR_CODE[shown.colour]
@@ -198,6 +201,8 @@ class Monitor:
                     self._persist(db, patient, vitals, result, shown, bp, previous=self._last_colour if changed else None)
                     self._last_snapshot = now
                 self._last_colour = colour
+                if alert:
+                    self._record_alert(db, patient, alert)
 
                 self.latest = self._payload(patient, vitals, result, shown, bp)
                 return self.latest
@@ -263,6 +268,31 @@ class Monitor:
             self.hold.update(t, CODE_COLOUR.get(row.raw_colour or row.colour, TR.HIJAU))
         if recent:
             self._last_colour = recent[-1].colour
+
+        # Deterioration alerts carry on from the last announced scores, or else
+        # from the first scores recorded at pickup.
+        last_alert = db.scalars(
+            select(PatientEvent)
+            .where(PatientEvent.patient_id == patient.id, PatientEvent.kind == "NOTIFIKASI")
+            .order_by(PatientEvent.created_at.desc())
+        ).first()
+        first = db.scalars(
+            select(TriageResult).where(TriageResult.patient_id == patient.id).order_by(TriageResult.created_at)
+        ).first()
+        baseline = (last_alert.data or {}).get("baseline") if last_alert else None
+        if baseline is None and first and first.news2_parts:
+            baseline = {k: v for k, v in first.news2_parts.items() if v is not None and k not in policy.NON_PHYSIOLOGICAL}
+        self.watch.reset(baseline, CODE_COLOUR.get(self._last_colour) if self._last_colour else None)
+
+    def _record_alert(self, db, patient: Patient, alert: Alert) -> None:
+        db.add(PatientEvent(
+            patient_id=patient.id,
+            kind="NOTIFIKASI",
+            detail=f"{alert.title}. {alert.message}",
+            data={**alert.data, "kind": alert.kind, "level": alert.level, "title": alert.title,
+                  "message": alert.message, "ack_at": None},
+        ))
+        db.commit()
 
     def _vitals(self) -> dict[str, Any]:
         """Each vital with its source. Sensor first, then a recent manual entry."""

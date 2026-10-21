@@ -61,9 +61,15 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
 def _page(request: Request, name: str, **context) -> HTMLResponse:
+    """Render a page. The app bar reads page_title, back_href/back_label and,
+    inside the Pantau Pasien flow, flow_step (1 data, 2 pemantauan, 3 serah terima)."""
     return templates.TemplateResponse(request, name, {
         "ambulance_id": settings.AMBULANCE_ID,
         "mock_mode": sensor_manager.mode == "MOCK",
+        "page_title": "SIREN",
+        "back_href": "/",
+        "back_label": "Beranda",
+        "flow_step": None,
         **context,
     })
 
@@ -81,8 +87,16 @@ def _require_active(patient: Patient) -> None:
 
 
 # ------------------------------------------------------------------- pages --
-@app.get("/", include_in_schema=False)
-def home(db: Session = Depends(get_db)):
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request, db: Session = Depends(get_db)):
+    current = active_patient(db)
+    return _page(request, "home.html", nav="home", page_title="Beranda", back_href=None,
+                 active=serialize_patient(current) if current else None)
+
+
+@app.get("/pantau", include_in_schema=False)
+def pantau(db: Session = Depends(get_db)):
+    """The Pantau Pasien button: carry on with the patient in the ambulance, or start a new one."""
     return RedirectResponse("/monitor" if active_patient(db) else "/start", status_code=303)
 
 
@@ -102,14 +116,15 @@ def start_page(request: Request, db: Session = Depends(get_db)):
     destinations = db.scalars(
         select(Patient.destination).where(Patient.destination.is_not(None)).distinct().limit(30)
     ).all()
-    return _page(request, "start.html", destinations=destinations, nav="start")
+    return _page(request, "start.html", destinations=destinations, nav="start",
+                 page_title="Data pasien", flow_step=1)
 
 
 @app.get("/monitor", response_class=HTMLResponse)
 def monitor_page(request: Request, db: Session = Depends(get_db)):
     if not active_patient(db):
         return RedirectResponse("/start", status_code=303)
-    return _page(request, "monitor.html", nav="monitor")
+    return _page(request, "monitor.html", nav="monitor", page_title="Pemantauan", flow_step=2)
 
 
 @app.get("/patients/{patient_id}", response_class=HTMLResponse)
@@ -118,7 +133,12 @@ def handover_page(request: Request, patient_id: str, db: Session = Depends(get_d
     if patient.status == "ACTIVE" and not _ready_for_handover():
         # Handover opens only once all required values are in or excused
         return RedirectResponse("/monitor?blocked=1", status_code=303)
-    return _page(request, "handover.html", patient_id=patient.id, nav="monitor" if patient.status == "ACTIVE" else "history")
+    if patient.status == "ACTIVE":
+        return _page(request, "handover.html", patient_id=patient.id, nav="monitor",
+                     page_title="Serah terima", flow_step=3)
+    # A finished patient opened from Riwayat: read-only summary, back to the list
+    return _page(request, "handover.html", patient_id=patient.id, nav="history",
+                 page_title=f"Ringkasan {patient.code}", back_href="/history", back_label="Riwayat")
 
 
 def _ready_for_handover() -> bool:
@@ -134,12 +154,12 @@ def _not_ready_detail(live: dict) -> str:
 
 @app.get("/history", response_class=HTMLResponse)
 def history_page(request: Request):
-    return _page(request, "history.html", nav="history")
+    return _page(request, "history.html", nav="history", page_title="Riwayat pasien")
 
 
 @app.get("/sensors", response_class=HTMLResponse)
 def sensors_page(request: Request):
-    return _page(request, "sensors.html", nav="sensors")
+    return _page(request, "sensors.html", nav="sensors", page_title="Perangkat")
 
 
 # --------------------------------------------------------------------- live --
@@ -260,6 +280,56 @@ def manual_vitals(patient_id: str, body: ManualVitals, db: Session = Depends(get
     db.commit()
     monitor.set_manual(values)
     return {"live": monitor.tick()}
+
+
+# ----------------------------------------------------------- notifications --
+LEVEL_ORDER = {"alarm": 0, "beep": 1}
+
+
+def _serialize_notification(event: PatientEvent, patient: Patient) -> dict:
+    data = event.data or {}
+    return {
+        "id": event.id,
+        "patient_id": patient.id,
+        "patient_code": patient.code,
+        "kind": data.get("kind"),
+        "level": data.get("level"),
+        "title": data.get("title"),
+        "message": data.get("message"),
+        "created_at": event.created_at.isoformat(),
+    }
+
+
+@app.get("/api/notifications")
+def pending_notifications(db: Session = Depends(get_db)):
+    """Deterioration alerts for the active patient that nobody has acknowledged yet."""
+    patient = active_patient(db)
+    if patient is None:
+        return {"items": []}
+    events = db.scalars(
+        select(PatientEvent)
+        .where(PatientEvent.patient_id == patient.id, PatientEvent.kind == "NOTIFIKASI")
+        .order_by(PatientEvent.created_at)
+    ).all()
+    pending = [e for e in events if not (e.data or {}).get("ack_at")]
+    # Alarms (MERAH) first, then the oldest unanswered
+    pending.sort(key=lambda e: (LEVEL_ORDER.get((e.data or {}).get("level"), 9), e.created_at))
+    return {"items": [_serialize_notification(e, patient) for e in pending]}
+
+
+@app.post("/api/notifications/{event_id}/ack")
+def acknowledge_notification(event_id: str, db: Session = Depends(get_db)):
+    event = db.get(PatientEvent, event_id)
+    if event is None or event.kind != "NOTIFIKASI":
+        raise HTTPException(status_code=404, detail="Notifikasi tidak ditemukan.")
+    data = dict(event.data or {})
+    if not data.get("ack_at"):
+        now = utcnow()
+        data["ack_at"] = now.isoformat()
+        event.data = data   # reassign so SQLAlchemy sees the JSON change
+        event.detail = f"{event.detail} Dikonfirmasi petugas {now.astimezone():%H:%M:%S}."
+        db.commit()
+    return {"ok": True, "ack_at": data["ack_at"]}
 
 
 @app.post("/api/patients/{patient_id}/unmeasured")

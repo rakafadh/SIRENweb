@@ -1,45 +1,75 @@
-<!DOCTYPE html>
-<html lang="id" data-theme="dark">
+{% from '_icons.html' import icon %}<!DOCTYPE html>
+<html lang="id" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="SIREN: triase dan pemantauan pasien di dalam ambulans, berjalan offline." />
-    <title>{% block title %}SIREN{% endblock %} · SIREN</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23151a1d'/%3E%3Cpath d='M6 17h5l3-7 4 13 3-6h5' fill='none' stroke='%235eb0c0' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <title>{% block title %}{{ page_title }}{% endblock %} · SIREN</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='img/siren-mark.svg') }}" />
     <script>
-      // Set the theme before CSS paints, so the screen never flashes white at night.
+      // Set the theme before CSS paints. Light by default; dark is a manual choice.
       try {
         const asked = new URLSearchParams(location.search).get('theme');
-        document.documentElement.dataset.theme = ['dark', 'light'].includes(asked) ? asked : (localStorage.getItem('siren_theme') || 'dark');
-      } catch (e) { /* default dark */ }
+        document.documentElement.dataset.theme = ['dark', 'light'].includes(asked) ? asked : (localStorage.getItem('siren_theme') || 'light');
+      } catch (e) { /* default light */ }
     </script>
     <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}" />
   </head>
-  <body>
+  <body class="page-{{ nav or 'other' }}">
     <a class="skip-link" href="#main">Lewati ke konten</a>
     <div class="app">
-      <header class="topbar">
-        <a class="brand" href="/" aria-label="SIREN, ke pasien aktif">
-          <span class="brand-name">SIREN</span>
-          <span class="brand-unit">{{ ambulance_id }}</span>
-        </a>
-        <nav class="nav" aria-label="Navigasi utama">
-          <a href="/" {% if nav in ('monitor', 'start') %}aria-current="page"{% endif %}>Pasien</a>
-          <a href="/history" {% if nav == 'history' %}aria-current="page"{% endif %}>Riwayat</a>
-          <a href="/sensors" {% if nav == 'sensors' %}aria-current="page"{% endif %}>Perangkat</a>
-        </nav>
-        <div class="topbar-right">
+      <header class="appbar">
+        <div class="appbar-side appbar-left">
+          {% if back_href %}
+          <a class="back" href="{{ back_href }}" aria-label="Kembali ke {{ back_label }}">{{ icon('caret-left') }}<span>{{ back_label }}</span></a>
+          {% else %}
+          <a class="brand" href="/" aria-label="SIREN, beranda"><img src="{{ url_for('static', path='img/siren-logo.svg') }}" alt="SIREN" /></a>
+          {% endif %}
+        </div>
+
+        <div class="appbar-center">
+          {% if flow_step %}
+          <ol class="stepper" aria-label="Langkah pantau pasien">
+            {% for label in ['Data pasien', 'Pemantauan', 'Serah terima'] %}
+            {% set n = loop.index %}
+            <li class="{{ 'is-done' if n < flow_step else ('is-current' if n == flow_step else '') }}" title="Langkah {{ n }}: {{ label }}" {% if n == flow_step %}aria-current="step"{% endif %}>
+              {% if n == 2 and flow_step == 3 %}
+              <a href="/monitor"><span class="step-dot">{{ icon('check') }}</span><span class="step-label">{{ label }}</span></a>
+              {% else %}
+              <span class="step-dot">{% if n < flow_step %}{{ icon('check') }}{% else %}{{ n }}{% endif %}</span><span class="step-label">{{ label }}</span>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ol>
+          {% elif back_href %}
+          <h1 class="appbar-title">{{ page_title }}</h1>
+          {% endif %}
+        </div>
+
+        <div class="appbar-side appbar-right">
           <div class="sys-status" aria-label="Status perangkat">
             <span id="sysPpg" title="Memeriksa sensor PPG"><i class="dot"></i><span class="txt">PPG</span></span>
             <span id="sysTemp" title="Memeriksa sensor suhu"><i class="dot"></i><span class="txt">Suhu</span></span>
             <span id="sysPrinter" title="Memeriksa printer"><i class="dot"></i><span class="txt">Printer</span></span>
           </div>
           <a href="/sensors" class="sim-badge{% if not mock_mode %} hidden{% endif %}" id="simBadge" title="Data sensor dibuat program, bukan dari pasien. Ganti di menu Perangkat.">SIMULASI</a>
-          <button type="button" class="btn btn-ghost btn-sm" id="themeBtn">Tema terang</button>
-          <button type="button" class="btn btn-ghost btn-sm" id="helpBtn" aria-label="Pintasan keyboard"><kbd>?</kbd></button>
+          <button type="button" class="icon-btn" id="themeBtn" aria-label="Ganti tema" title="Ganti tema">
+            <span class="theme-to-dark">{{ icon('moon') }}</span><span class="theme-to-light">{{ icon('sun') }}</span>
+          </button>
+          <button type="button" class="icon-btn" id="helpBtn" aria-label="Pintasan keyboard" title="Pintasan keyboard (?)">{{ icon('keyboard') }}</button>
           <time class="clock" id="clock"></time>
         </div>
       </header>
+
+      <section id="alertBanner" class="alert-banner hidden" role="alertdialog" aria-labelledby="alertTitle" aria-describedby="alertMessage">
+        <span class="alert-icon">{{ icon('warning') }}</span>
+        <div class="alert-body">
+          <strong class="alert-title" id="alertTitle"></strong>
+          <p class="alert-message" id="alertMessage"></p>
+          <p class="alert-meta" id="alertMeta"></p>
+        </div>
+        <button type="button" class="btn alert-ack" id="alertAck">Saya mengerti <kbd>K</kbd></button>
+      </section>
 
       <div id="connBanner" class="conn-banner hidden" role="alert">
         <strong>Koneksi ke server SIREN terputus.</strong>

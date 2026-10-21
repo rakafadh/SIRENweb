@@ -94,7 +94,8 @@ async def http_error(request: Request, exc: StarletteHTTPException) -> JSONRespo
 
         return templates.TemplateResponse(
             request, "404.html",
-            {"ambulance_id": settings.AMBULANCE_ID, "mock_mode": sensor_manager.mode == "MOCK", "nav": None},
+            {"ambulance_id": settings.AMBULANCE_ID, "mock_mode": sensor_manager.mode == "MOCK", "nav": None,
+             "page_title": "Tidak ditemukan", "back_href": "/", "back_label": "Beranda", "flow_step": None},
             status_code=404,
         )
     detail = exc.detail

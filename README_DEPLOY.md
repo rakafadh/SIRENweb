@@ -230,6 +230,7 @@ Uji dari menu **Perangkat → Cetak uji**.
 | Melihat log | `journalctl -u siren -f` |
 | Mode simulasi untuk demo | Menu **Perangkat** → **Simulasi** (hanya saat tidak ada pasien aktif). Kembalikan ke **Sensor sungguhan** sebelum dipakai di ambulans. |
 | Daftar pintasan keyboard | Tekan `?` di layar mana pun |
+| Notifikasi pasien memburuk | Banner kuning (NEWS2 naik ≥3, bunyi sekali) atau merah (menjadi MERAH, alarm berulang). Tekan **Saya mengerti** atau `K`. Bila tertulis "bunyi belum aktif", sentuh layar sekali. |
 | PDF serah terima | Tersimpan di `~/Downloads`; salin ke flashdisk bila perlu |
 | Data mentah | Menu **Riwayat** → ekspor CSV |
 | Cadangan data | Saat server mati, salin `siren.db` dan `siren.db-wal` |
@@ -266,9 +267,9 @@ Lakukan di Orange Pi yang sudah terpasang di ambulans, dengan kedua ESP32 dan pr
 
 | No | Uji | Hasil yang diharapkan | ✓ |
 |---|---|---|---|
-| 1 | Nyalakan Orange Pi, ukur dengan stopwatch | SIREN tampil layar penuh dalam **< 60 detik**, tanpa login manual | ☐ |
+| 1 | Nyalakan Orange Pi, ukur dengan stopwatch | **Beranda** SIREN tampil layar penuh dalam **< 60 detik**, tanpa login manual, dengan menu Pantau Pasien, Riwayat, Perangkat | ☐ |
 | 2 | Lihat jam di kanan atas | Sama dengan jam sebenarnya (WIB) | ☐ |
-| 3 | Lihat status di topbar | Titik **PPG**, **Suhu**, **Printer** hijau; tidak ada badge **SIMULASI** | ☐ |
+| 3 | Lihat status di bar atas | Titik **PPG**, **Suhu**, **Printer** hijau; tidak ada badge **SIMULASI** | ☐ |
 | 4 | Menu **Perangkat** | Kedua node *Terhubung*; *Sumber data sensor* = **Sensor sungguhan** | ☐ |
 | 5 | **Perangkat → Cetak uji** | Label "UJI" tercetak dalam < 3 detik | ☐ |
 
@@ -286,7 +287,7 @@ Lakukan di Orange Pi yang sudah terpasang di ambulans, dengan kedua ESP32 dan pr
 
 | No | Uji | Hasil yang diharapkan | ✓ |
 |---|---|---|---|
-| 11 | Pasien baru tanpa nama | Diterima sebagai "Tanpa identitas" dengan kode SRN otomatis | ☐ |
+| 11 | **Pantau Pasien**, lalu mulai tanpa nama | Diterima sebagai "Tanpa identitas" dengan kode SRN otomatis | ☐ |
 | 12 | Isi usia 150 lalu simpan | Kolom ditandai merah: "Usia maksimal 120 tahun." | ☐ |
 | 13 | Tekan `U` (tidak responsif) | Kategori **MERAH**, alasan "tidak responsif"; notifikasi punya tombol **Urungkan** | ☐ |
 | 14 | Tekan **Urungkan** | Kategori langsung kembali ke sebelumnya | ☐ |
@@ -321,6 +322,17 @@ Lakukan di Orange Pi yang sudah terpasang di ambulans, dengan kedua ESP32 dan pr
 | 28 | `sudo systemctl stop siren` saat layar terbuka | Banner merah "Koneksi ke server SIREN terputus" | ☐ |
 | 29 | `sudo systemctl start siren` | Banner hilang, muncul "Koneksi ke server SIREN pulih" | ☐ |
 | 30 | Ambulans berjalan di jalan bergelombang | Nadi dan laju napas diberi tanda "getaran tinggi" bila guncangan kuat | ☐ |
+
+### C7. Notifikasi pasien memburuk
+
+| No | Uji | Hasil yang diharapkan | ✓ |
+|---|---|---|---|
+| 31 | Mode **Simulasi** skenario *Pasien memburuk*, mulai pasien baru, tunggu | Saat NEWS2 naik ≥3: banner **kuning** "NEWS2 naik … poin" dengan **bunyi sekali**; tetap tampil sampai **Saya mengerti** ditekan | ☐ |
+| 32 | Lanjutkan sampai kategori menjadi **MERAH** | Banner **merah** "Pasien memburuk: kategori MERAH" dengan **alarm berulang**; berhenti setelah **Saya mengerti** atau tombol `K` | ☐ |
+| 33 | Buka halaman lain (Perangkat, Riwayat) saat ada notifikasi | Banner tetap muncul di halaman mana pun | ☐ |
+| 34 | Centang *oksigen tambahan* pada pasien stabil | Tidak ada notifikasi (memberi oksigen bukan perburukan) | ☐ |
+| 35 | Bunyi di kabin ambulans dengan volume normal | Alarm terdengar jelas dari bangku petugas | ☐ |
+| 36 | Buka serah terima → *Catatan & tindakan* | Setiap notifikasi tercatat beserta jam konfirmasinya; juga ada di PDF | ☐ |
 
 **Hasil UAT:** ☐ Lulus semua  ☐ Lulus dengan catatan  ☐ Belum lulus
 

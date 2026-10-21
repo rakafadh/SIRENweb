@@ -19,4 +19,5 @@ exec "$BROWSER" \
     --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
     --no-first-run --password-store=basic --disable-features=Translate \
     --overscroll-history-navigation=0 --disable-pinch \
+    --autoplay-policy=no-user-gesture-required \
     --check-for-update-interval=31536000

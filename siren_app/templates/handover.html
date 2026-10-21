@@ -3,7 +3,6 @@
 {% block content %}
 <div class="page" data-patient-id="{{ patient_id }}">
   <div class="page-head">
-    <a class="btn btn-ghost btn-sm hidden" id="backLink" href="/monitor">← Pemantauan <kbd>M</kbd></a>
     <div class="head-title">
       <span class="eyebrow">Serah terima · <span class="mono" id="hCode"></span></span>
       <h2 id="hName"><span class="skeleton">Memuat</span></h2>
@@ -84,7 +83,7 @@
     const S = SIREN;
     const { api, num, time, dateTime, setText, el, toast, busy, shortcut } = S;
     const patientId = document.querySelector('[data-patient-id]').dataset.patientId;
-    const KIND = { START: 'Penjemputan', INPUT: 'Input', CUFF_BP: 'TD manset', MANUAL_VITAL: 'Vital manual', TIDAK_DIUKUR: 'Tidak diukur', TINDAKAN: 'Tindakan', KATEGORI: 'Kategori', STATUS: 'Status', CETAK: 'Cetak' };
+    const KIND = { START: 'Penjemputan', INPUT: 'Input', CUFF_BP: 'TD manset', MANUAL_VITAL: 'Vital manual', TIDAK_DIUKUR: 'Tidak diukur', NOTIFIKASI: 'Notifikasi', TINDAKAN: 'Tindakan', KATEGORI: 'Kategori', STATUS: 'Status', CETAK: 'Cetak' };
     const yes = (v) => (v ? 'ya' : 'tidak');
     let detail = null;
     let armed = false;
@@ -103,7 +102,6 @@
 
       setText('hCode', p.code);
       setText('hName', p.display_name);
-      document.getElementById('backLink').classList.toggle('hidden', !active);
       document.getElementById('handoverBtn').classList.toggle('hidden', !active);
       document.getElementById('doneNotice').classList.toggle('hidden', active);
       if (!active) setText('doneText', `Diserahterimakan ${dateTime(p.handed_over_at)}. Data pasien ini terkunci.`);

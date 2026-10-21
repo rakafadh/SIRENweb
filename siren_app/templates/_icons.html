@@ -1,0 +1,4 @@
+{# Phosphor icons (MIT), inlined so they follow currentColor and work offline. #}
+{% macro icon(name, cls='') -%}
+<span class="icon {{ cls }}" aria-hidden="true">{% include 'icons/' ~ name ~ '.svg' %}</span>
+{%- endmacro %}

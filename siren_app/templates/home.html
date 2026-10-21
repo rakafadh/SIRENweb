@@ -1,0 +1,92 @@
+{% extends 'base.html' %}
+{% from '_icons.html' import icon %}
+{% block title %}Beranda{% endblock %}
+{% block content %}
+<div class="home">
+  <section class="home-hero" aria-label="SIREN">
+    <img class="home-logo" src="{{ url_for('static', path='img/siren-logo.svg') }}" alt="SIREN" />
+    <p class="home-tagline">Triase dan pemantauan pasien di dalam ambulans</p>
+    <p class="home-meta"><span>Unit {{ ambulance_id }}</span><span id="homeDate"></span></p>
+    <p class="home-hint">Tekan <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> untuk memilih menu</p>
+  </section>
+
+  <nav class="home-menu" aria-label="Menu utama">
+    <a class="tile tile-primary" href="/pantau" id="tilePantau">
+      <span class="tile-icon">{{ icon('heartbeat') }}</span>
+      <span class="tile-text">
+        <strong>{% if active %}Lanjutkan pemantauan{% else %}Pantau Pasien{% endif %}</strong>
+        {% if active %}
+        <span class="tile-patient">
+          <span class="mono">{{ active.code }}</span> · {{ active.display_name }}
+          <span class="tag" id="activeColour">…</span>
+        </span>
+        <span>Pasien masih dalam perjalanan. Lanjutkan pemantauan atau serah terima.</span>
+        {% else %}
+        <span>Data pasien, pemantauan selama perjalanan, lalu serah terima di rumah sakit.</span>
+        {% endif %}
+      </span>
+      <span class="tile-go">{{ icon('arrow-right') }}</span>
+      <kbd class="tile-key">1</kbd>
+    </a>
+
+    <div class="tile-row">
+      <a class="tile" href="/history">
+        <span class="tile-icon">{{ icon('clock-counter-clockwise') }}</span>
+        <span class="tile-text">
+          <strong>Riwayat</strong>
+          <span id="historySub">Pasien sebelumnya dan ekspor data</span>
+        </span>
+        <kbd class="tile-key">2</kbd>
+      </a>
+      <a class="tile" href="/sensors">
+        <span class="tile-icon">{{ icon('cpu') }}</span>
+        <span class="tile-text">
+          <strong>Perangkat</strong>
+          <span id="deviceSub">Sensor, printer, dan mode simulasi</span>
+        </span>
+        <kbd class="tile-key">3</kbd>
+      </a>
+    </div>
+  </nav>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (() => {
+    const S = SIREN;
+    const go = (href) => () => { window.location.href = href; };
+    S.shortcut('1', 'Pantau Pasien', go('/pantau'));
+    S.shortcut('2', 'Riwayat', go('/history'));
+    S.shortcut('3', 'Perangkat', go('/sensors'));
+
+    S.setText('homeDate', new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
+
+    async function refresh() {
+      const [live, patients] = await Promise.all([S.api('/api/live'), S.api('/api/patients')]);
+      if (live.ok) {
+        const badge = document.getElementById('activeColour');
+        const colour = live.data.triage && live.data.triage.colour;
+        if (badge && colour) {
+          badge.className = `tag ${S.COLOUR_CLASS[colour] || ''}`;
+          badge.textContent = colour;
+        }
+        // An active patient appeared or left while this page was open
+        if (Boolean(live.data.patient) !== Boolean(badge)) window.location.reload();
+
+        const s = live.data.sensors;
+        const sensorsOk = s.ppg.status === 'CONNECTED' && (s.temp.status === 'CONNECTED' || s.temp.via);
+        S.setText('deviceSub', s.mode === 'MOCK'
+          ? 'Mode simulasi aktif: angka sensor buatan'
+          : sensorsOk ? 'Kedua sensor terhubung' : 'Sensor belum lengkap terhubung, cek di sini');
+      }
+      if (patients.ok) {
+        const n = patients.data.items.length;
+        S.setText('historySub', n ? `${n} pasien tercatat · ekspor data` : 'Belum ada pasien tercatat');
+      }
+    }
+    refresh();
+    setInterval(refresh, 3000);
+  })();
+</script>
+{% endblock %}

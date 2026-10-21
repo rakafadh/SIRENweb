@@ -325,7 +325,12 @@ const SIREN = (() => {
     document.documentElement.dataset.theme = theme;
     try { localStorage.setItem('siren_theme', theme); } catch (error) { /* storage unavailable */ }
     const button = document.getElementById('themeBtn');
-    if (button) button.textContent = theme === 'dark' ? 'Tema terang' : 'Tema gelap';
+    if (button) {
+      // The button shows a moon in light mode and a sun in dark mode (CSS)
+      const label = theme === 'dark' ? 'Ganti ke tema terang' : 'Ganti ke tema gelap';
+      button.setAttribute('aria-label', label);
+      button.title = label;
+    }
   }
 
   // ----------------------------------------------------------- system state
@@ -359,6 +364,99 @@ const SIREN = (() => {
     if (printer.ok) renderPrinter(printer.data);
   }
 
+  // --------------------------------------------------- deterioration alerts
+  // MERAH: alarm repeating until acknowledged. NEWS2 rise: one beep.
+  // Sound is synthesised, so it works offline with no audio files.
+  const sound = (() => {
+    let ctx = null;
+    let loop = null;
+    function context() {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      if (!ctx) ctx = new Ctx();
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      return ctx;
+    }
+    function tone(freq, start, length) {
+      const c = context();
+      if (!c) return;
+      const osc = c.createOscillator();
+      const gain = c.createGain();
+      osc.type = 'square';
+      osc.frequency.value = freq;
+      const t0 = c.currentTime + start;
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + length);
+      osc.connect(gain).connect(c.destination);
+      osc.start(t0);
+      osc.stop(t0 + length + 0.02);
+    }
+    function alarmBurst() { [0, 0.22, 0.44].forEach((s) => tone(988, s, 0.16)); }
+    return {
+      // Browsers may block sound until the page has been touched once
+      unlock: () => context(),
+      blocked: () => !ctx || ctx.state !== 'running',
+      beep() { tone(660, 0, 0.14); tone(880, 0.18, 0.18); },
+      alarm() {
+        if (loop) return;
+        alarmBurst();
+        loop = setInterval(alarmBurst, 1500);
+      },
+      stop() { clearInterval(loop); loop = null; },
+    };
+  })();
+
+  const alerts = (() => {
+    let current = null;
+    const beeped = new Set();
+
+    function render(items) {
+      const banner = document.getElementById('alertBanner');
+      if (!banner) return;
+      if (!items.length) {
+        current = null;
+        banner.classList.add('hidden');
+        sound.stop();
+        return;
+      }
+      const item = items[0];
+      current = item;
+      banner.className = `alert-banner ${item.level === 'alarm' ? 'alarm' : 'beep'}`;
+      setText('alertTitle', item.title);
+      setText('alertMessage', item.message);
+      const more = items.length > 1 ? ` · ${items.length - 1} notifikasi lain menunggu` : '';
+      const muted = sound.blocked() ? ' · bunyi belum aktif: sentuh layar sekali' : '';
+      setText('alertMeta', `${item.patient_code} · ${time(item.created_at, true)}${more}${muted}`);
+      if (item.level === 'alarm') {
+        sound.alarm();
+      } else {
+        sound.stop();
+        if (!beeped.has(item.id)) { beeped.add(item.id); sound.beep(); }
+      }
+    }
+
+    async function poll() {
+      const result = await api('/api/notifications');
+      if (result.ok) render(result.data.items);
+    }
+
+    async function acknowledge() {
+      if (!current) return;
+      const item = current;
+      const result = await api(`/api/notifications/${item.id}/ack`, { method: 'POST' });
+      if (!result.ok) {
+        toast(`Notifikasi belum terkonfirmasi. ${result.error}`, { type: 'error' });
+        return;
+      }
+      sound.stop();
+      toast(`Dikonfirmasi pukul ${time(result.data.ack_at, true)}.`, { type: 'success' });
+      poll();
+    }
+
+    return { poll, acknowledge };
+  })();
+
   function startClock() {
     const node = document.getElementById('clock');
     if (!node) return;
@@ -369,7 +467,7 @@ const SIREN = (() => {
 
   document.addEventListener('DOMContentLoaded', () => {
     startClock();
-    applyTheme(document.documentElement.dataset.theme || 'dark');
+    applyTheme(document.documentElement.dataset.theme || 'light');
     document.getElementById('themeBtn')?.addEventListener('click', () => {
       applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
     });
@@ -379,6 +477,11 @@ const SIREN = (() => {
     document.querySelectorAll('[data-close-dialog]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
     refreshSystem();
     setInterval(refreshSystem, 5000);
+    document.getElementById('alertAck')?.addEventListener('click', alerts.acknowledge);
+    ['pointerdown', 'keydown'].forEach((type) => document.addEventListener(type, sound.unlock, { passive: true }));
+    shortcut('K', 'Konfirmasi notifikasi pasien memburuk', alerts.acknowledge);
+    alerts.poll();
+    setInterval(alerts.poll, 2000);
     // /monitor#drawerManual opens that panel once the page has its data
     const hash = window.location.hash.slice(1);
     if (hash && document.getElementById(hash)?.classList.contains('drawer')) setTimeout(() => openDrawer(hash), 600);

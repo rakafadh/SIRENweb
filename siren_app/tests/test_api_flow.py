@@ -26,7 +26,10 @@ def live(client, app_module):
 
 
 def test_home_routes(client):
-    assert client.get("/", follow_redirects=False).headers["location"] == "/start"
+    home = client.get("/")
+    assert home.status_code == 200
+    assert "Pantau Pasien" in home.text and "/history" in home.text and "/sensors" in home.text
+    assert client.get("/pantau", follow_redirects=False).headers["location"] == "/start"
     assert client.get("/dashboard", follow_redirects=False).headers["location"] == "/"
     assert client.get("/start").status_code == 200
     assert client.get("/sensors").status_code == 200
@@ -36,7 +39,8 @@ def test_patient_without_identity_is_accepted(client):
     patient = new_patient(client, systolic=None, diastolic=None)
     assert patient["display_name"] == "Tanpa identitas"
     assert patient["code"].startswith("SRN-")
-    assert client.get("/", follow_redirects=False).headers["location"] == "/monitor"
+    assert client.get("/pantau", follow_redirects=False).headers["location"] == "/monitor"
+    assert "Lanjutkan pemantauan" in client.get("/").text
 
 
 def test_only_one_active_patient(client):
@@ -214,7 +218,7 @@ def test_handover_locks_record_and_exports_pdf(client, app_module):
     response = client.post(f"/api/patients/{patient['id']}/handover")
     assert response.json()["patient"]["status"] == "HANDED_OVER"
     assert client.patch(f"/api/patients/{patient['id']}", json={"pain": 3}).status_code == 409
-    assert client.get("/", follow_redirects=False).headers["location"] == "/start"
+    assert client.get("/pantau", follow_redirects=False).headers["location"] == "/start"
 
     detail = client.get(f"/api/patients/{patient['id']}").json()
     assert any(e["kind"] == "TINDAKAN" for e in detail["events"])

@@ -1,0 +1,14 @@
+# Files that run on the Orange Pi (Linux) must keep LF line endings, even on a
+# Windows laptop with core.autocrlf=true. A CRLF install.sh fails with
+# "$'\r': command not found".
+*.sh        text eol=lf
+*.service   text eol=lf
+*.desktop   text eol=lf
+*.rules     text eol=lf
+.env.example text eol=lf
+
+# Binary files: never touch
+*.joblib    binary
+*.woff2     binary
+*.png       binary
+*.pdf       binary

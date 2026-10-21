@@ -37,9 +37,12 @@ Buka http://127.0.0.1:8000. Tanpa ESP32, pilih **Perangkat → Simulasi**.
 
 ## Alur di layar
 
+SIREN dibuka di **Beranda** dengan tiga menu (pintasan `1` `2` `3`). **Pantau Pasien** membawa ke tiga langkah berurutan yang ditunjukkan di bar atas: 1 Data pasien → 2 Pemantauan → 3 Serah terima. Bila masih ada pasien aktif, menu ini berubah menjadi **Lanjutkan pemantauan**. Tombol kembali di kiri atas selalu menuju Beranda.
+
 | Halaman | Isi |
 |---|---|
-| **Pasien baru** | Kesadaran, kriteria START, nyeri, TD manset, identitas (opsional) |
+| **Beranda** | Menu Pantau Pasien (utama), Riwayat, Perangkat; status sensor dan printer di bar atas |
+| **Data pasien** | Kesadaran, kriteria START, nyeri, TD manset, identitas (opsional) |
 | **Pemantauan** | Kategori live dan alasannya, tanda vital beserta sumbernya, rincian NEWS2, input petugas, catatan tindakan |
 | **Serah terima** | Terbuka setelah 7 parameter NEWS2 lengkap (atau ditandai "tidak dapat diukur" dengan alasan). Ringkasan, PDF, label, lalu data dikunci. |
 | **Riwayat** | Pasien sebelumnya, ekspor CSV |

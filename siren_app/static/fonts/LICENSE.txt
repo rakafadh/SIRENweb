@@ -1,3 +1,10 @@
 Geist and Geist Mono by Vercel, SIL Open Font License 1.1.
 https://github.com/vercel/geist-font
 Latin subsets from @fontsource-variable/geist@5.1.0 and geist-mono@5.1.0.
+
+Plus Jakarta Sans by Tokotype, SIL Open Font License 1.1.
+https://github.com/tokotype/PlusJakartaSans
+Latin subset from @fontsource-variable/plus-jakarta-sans@5.1.1.
+
+Icons (templates/icons): Phosphor Icons, MIT License.
+https://github.com/phosphor-icons/core
