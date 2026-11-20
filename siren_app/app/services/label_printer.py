@@ -168,12 +168,12 @@ def qr_text(facts: dict[str, Any]) -> str:
             f"{facts['vitals_at']} {facts['vitals_short']}",
             f"TD {facts['cuff']}; {facts['status_short']}",
         ]
+    # The complaint is not printed on the label, so it outranks the alerts
+    # (also on screen and in the PDF) and the unit/destination (on the label).
+    lines.append(f"Keluhan: {_clip(facts['complaint'], 44)}")
     if facts["alerts"]:
         lines.append("! " + "; ".join(_clip(a, 30) for a in facts["alerts"][:2]))
-    lines += [
-        f"{facts['unit']}; RS {_clip(facts['destination'], 26)}",
-        f"Keluhan: {_clip(facts['complaint'], 44)}",
-    ]
+    lines.append(f"{facts['unit']}; RS {_clip(facts['destination'], 26)}")
     # Whole lines only: a line cut in half ("Keluhan: ..") reads as an error.
     kept: list[str] = []
     for line in lines:
