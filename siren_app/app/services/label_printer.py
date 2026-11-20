@@ -30,7 +30,7 @@ from app.config import Settings, settings
 log = logging.getLogger("siren.printer")
 
 ACVPU_SHORT = {"alert": "A", "confusion": "C", "voice": "V", "pain": "P", "unresponsive": "U"}
-QR_TEXT_LIMIT = 280     # bytes; version 12 at error correction M holds 287
+QR_TEXT_LIMIT = 500     # bytes; version 17 at error correction M holds 504
 BAND_ROWS = 128         # rows per raster command; small printers have small buffers
 
 _FONT_CANDIDATES = {
@@ -98,31 +98,80 @@ def label_facts(detail: dict[str, Any]) -> dict[str, Any]:
         "handed": _when(patient["handed_over_at"]) if patient["handed_over_at"] else None,
         "destination": patient["destination"],
         "unit": patient["ambulance_id"],
+        "journey": detail.get("journey"),
         "mock": any((r.get("sources") or {}).get("hr") == "MOCK" for r in detail["timeline"]),
     }
 
 
-def qr_text(facts: dict[str, Any]) -> str:
-    """Plain text summary, kept short so the QR stays at version 12 or below.
+def _minutes(seconds: float) -> str:
+    if seconds < 60:
+        return "<1 mnt"
+    total = int(round(seconds / 60))
+    hours, mins = divmod(total, 60)
+    return f"{hours} j {mins} mnt" if hours else f"{mins} mnt"
 
-    At 384 dots that leaves at least 5 dots (0.6 mm) per module, which phone
-    cameras read reliably from label distance. More text means smaller modules.
+
+def _vitals_line(vitals: dict[str, Any]) -> str:
+    def v(key: str, digits: int = 0) -> str:
+        item = vitals.get(key)
+        return _num(item["value"] if item else None, digits)
+    return f"N{v('hr')} SpO2 {v('spo2')} RR{v('rr')} S{v('temp', 1)}"
+
+
+def _condition_lines(label: str, side: dict[str, Any]) -> list[str]:
+    tri = side.get("triage") or {}
+    news = tri.get("news2_total")
+    news_txt = "-" if news is None else f"{news} ({tri.get('news2_measured', 0)}/7)"
+    cuff = side.get("cuff")
+    cuff_txt = f"{_num(cuff['systolic'])}/{_num(cuff['diastolic'])}" if cuff and cuff.get("systolic") is not None else "-"
+    pain = side.get("pain")
+    return [
+        f"{label} {_when(tri.get('at'))} {tri.get('colour') or '-'} NEWS2 {news_txt}",
+        _vitals_line(side.get("vitals") or {}),
+        (f"TD {cuff_txt} ACVPU {ACVPU_SHORT.get(side.get('acvpu'), '-')} "
+         f"O2 {'ya' if side.get('on_oxygen') else 'tdk'} nyeri {pain if pain is not None else '-'}"),
+    ]
+
+
+def qr_text(facts: dict[str, Any]) -> str:
+    """What a phone shows after scanning: the trip, not a copy of the label.
+
+    The label already prints the latest category and vitals. The QR adds what
+    does not fit on paper: how long the trip took, how often and how long the
+    patient was in each triage colour, and the condition at pickup next to the
+    condition at the end. Kept under QR_TEXT_LIMIT so the code stays at
+    version 17 or below, 4 dots (0.5 mm) per module on 58 mm paper.
     """
     # Most important first: if anything is cut, it is the tail.
-    source = "" if facts["source"] == "NEWS2" else f" ({facts['source']})"
     lines = [
         f"SIREN {facts['code']}" + (" SIMULASI" if facts["mock"] else ""),
-        f"{facts['colour']}{source} NEWS2 {facts['news']}",
         f"{_clip(facts['name'], 30)}, {facts['who']}",
-        f"{facts['vitals_at']} {facts['vitals_short']}",
-        f"TD {facts['cuff']}; {facts['status_short']}",
-        f"Terberat {facts['worst']}; START {_clip(facts['start'], 34)}",
     ]
+    journey = facts.get("journey")
+    if journey:
+        # Labels are usually printed before "Selesai serah terima", so an
+        # unfinished trip is measured up to the moment of printing.
+        until = _when(journey["end"]) + ("" if journey["ended"] else " (saat cetak)")
+        lines += [
+            f"PERJALANAN {_when(journey['start'])}-{until}, {_minutes(journey['duration_s'])}",
+            "Triase selama perjalanan:",
+        ]
+        for colour in ("MERAH", "KUNING", "HIJAU"):
+            c = journey["colours"][colour]
+            lines.append(f"{colour} {c['episodes']}x, {_minutes(c['seconds'])}" if c["episodes"] else f"{colour} 0x")
+        lines.append(f"Terberat {facts['worst']}; START {_clip(facts['start'], 34)}")
+        lines += _condition_lines("JEMPUT", journey["pickup"])
+        lines += _condition_lines("AKHIR", journey["final"])
+    else:
+        lines += [
+            f"{facts['colour']} NEWS2 {facts['news']}",
+            f"{facts['vitals_at']} {facts['vitals_short']}",
+            f"TD {facts['cuff']}; {facts['status_short']}",
+        ]
     if facts["alerts"]:
         lines.append("! " + "; ".join(_clip(a, 30) for a in facts["alerts"][:2]))
     lines += [
-        f"Mulai {facts['started']}" + (f" serah {facts['handed']}" if facts["handed"] else "")
-        + f"; {facts['unit']}; RS {_clip(facts['destination'], 26)}",
+        f"{facts['unit']}; RS {_clip(facts['destination'], 26)}",
         f"Keluhan: {_clip(facts['complaint'], 44)}",
     ]
     text = "\n".join(lines).encode("ascii", "replace").decode("ascii")
@@ -197,7 +246,7 @@ def render_label(detail: dict[str, Any], width: int) -> Image.Image:
     canvas.paste(matrix, ((width - matrix.width) // 2, y))
     y += matrix.height + 4
 
-    text("Pindai QR untuk ringkasan lengkap.", small, gap=2)
+    text("Pindai QR: lama perjalanan, rekap triase, kondisi jemput vs akhir.", small, gap=2)
     text("Alat bantu, bukan pengganti penilaian klinis.", small, gap=2)
     return canvas.crop((0, 0, width, y + 6))
 

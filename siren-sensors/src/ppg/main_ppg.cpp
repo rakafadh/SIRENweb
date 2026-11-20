@@ -24,7 +24,7 @@
  *     start to end, which is what a finger being placed or lifted looks like.
  *   - Reports perfusion index so signal quality is visible.
  *   - Heart rate from beat timing, with the Maxim value as fallback.
- *   - PPG-derived respiration rate on a separate 60 s window.
+ *   - PPG-derived respiration rate, first estimate after 16 s, 32 s window.
  */
 
 #include <Arduino.h>
@@ -65,7 +65,8 @@ static const float    PI_MIN         = 0.15f;    // below this the pulse is too 
 static const uint8_t  LED_MIN = 0x08;
 static const uint8_t  LED_MAX = 0xC0;
 
-static const uint8_t  RESP_EVERY_N_CYCLES = 5;   // recompute every ~5 s
+static const uint32_t RESP_COMPUTE_MS = 1000;    // recompute RR once per second
+static const float    RESP_BLOCK_DRIFT_MAX = 0.08f; // DC change within one block = artefact
 
 // The calibration model now lives on the temperature node, so recalibrating
 // means reflashing only the board that holds the sensor. This node receives
@@ -87,7 +88,7 @@ static const uint32_t TEMP_STALE_MS = 5000;
 // parsers that only accept rows beginning with a digit, such as
 // tools/siren_dashboard.py, skip it unchanged.
 //
-//   W,<millis at end of block>,<measured fs>,<ir_1>,...,<ir_25>
+//   W,<millis of the block's last sample>,<measured fs>,<ir_1>,...,<ir_25>
 //
 // Samples are raw counts, oldest first, not filtered and not inverted. The
 // measured rate travels with every block because the host has to resample.
@@ -123,21 +124,99 @@ int32_t hrHistory[5] = {0, 0, 0, 0, 0};
 uint8_t hrCount = 0;
 
 RespirationResult respLatest;
-uint8_t respCycle = 0;
+uint32_t respLastMs = 0;
+bool respEnabled = false;   // finger present, set by loop()
 
 // --------------------------------------------------------------- helpers ----
-static void readOneSample(uint32_t &red, uint32_t &ir, uint32_t *rawIrOut = nullptr) {
-    while (!pox.available()) {
-        pox.check();
+// Direct FIFO reader.
+//
+// The MAX30102 produces 25 samples/s (verified with the FIFO test at boot),
+// but reading through SparkFun's check()/available() delivered only about 10:
+// the library keeps just 4 samples in its own ring and drops the rest. Here
+// the FIFO is read directly: both pointers are read, every waiting sample is
+// fetched in one burst, and each sample gets its own timestamp, spaced one
+// sample period apart and ending at the read time. Beat timing (HR, RIFV)
+// depends on those timestamps being right.
+static const uint8_t  MAX_REG_FIFO_WR   = 0x04;
+static const uint8_t  MAX_REG_FIFO_RD   = 0x06;
+static const uint8_t  MAX_REG_FIFO_DATA = 0x07;
+static const float    SAMPLE_PERIOD_MS  = 1000.0f / FS_NOMINAL;
+
+static uint32_t qRed[32], qIr[32], qMs[32];
+static uint8_t  qHead = 0, qCount = 0;
+static uint32_t lastSampleMs = 0;     // timestamp of the sample just returned
+static uint32_t fifoReadErrors = 0;
+static double   sampleClockMs  = 0.0;  // running sample clock, ms
+
+static void fifoFill() {
+    uint8_t wrRaw = maxReadReg(MAX_REG_FIFO_WR);
+    uint8_t rdRaw = maxReadReg(MAX_REG_FIFO_RD);
+    if (wrRaw == 0xFF || rdRaw == 0xFF) { fifoReadErrors++; return; }   // I2C error
+    uint8_t n = (uint8_t)((wrRaw - rdRaw) & 0x1F);
+    if (n == 0) return;
+
+    uint32_t now = millis();
+    Wire.beginTransmission(MAX_I2C_ADDR);
+    Wire.write(MAX_REG_FIFO_DATA);
+    if (Wire.endTransmission() != 0) { fifoReadErrors++; return; }   // same as SparkFun: stop, then read
+
+    uint8_t done = 0;
+    while (done < n) {
+        uint8_t chunk = n - done;
+        if (chunk > 20) chunk = 20;                 // 20 x 6 = 120 bytes per request
+        uint8_t bytes = chunk * 6;
+        if (Wire.requestFrom((uint8_t)MAX_I2C_ADDR, bytes) != bytes) { fifoReadErrors++; return; }
+        for (uint8_t k = 0; k < chunk; k++) {
+            // One byte per statement: the order of calls inside a single
+            // expression is unspecified in C++.
+            uint32_t r0 = Wire.read(), r1 = Wire.read(), r2 = Wire.read();
+            uint32_t i0 = Wire.read(), i1 = Wire.read(), i2 = Wire.read();
+            uint8_t idx = (qHead + qCount) & 0x1F;
+            qRed[idx] = ((r0 << 16) | (r1 << 8) | r2) & 0x3FFFF;
+            qIr[idx]  = ((i0 << 16) | (i1 << 8) | i2) & 0x3FFFF;
+
+            // Timestamp. The chip samples on its own steady clock, so each
+            // sample is one period after the previous one. The read time only
+            // nudges that clock (5 % per sample) so it cannot drift, and
+            // re-anchors it after a gap of more than three periods.
+            uint8_t fromEnd = (uint8_t)(n - 1 - (done + k));
+            double anchored = (double)now - fromEnd * (double)SAMPLE_PERIOD_MS;
+            double expected = sampleClockMs + SAMPLE_PERIOD_MS;
+            if (sampleClockMs <= 0.0 || fabs(anchored - expected) > 3.0 * SAMPLE_PERIOD_MS) {
+                sampleClockMs = anchored;
+            } else {
+                sampleClockMs = expected + 0.05 * (anchored - expected);
+            }
+            qMs[idx] = (uint32_t)(sampleClockMs + 0.5);
+            if (qCount < 32) qCount++; else qHead = (qHead + 1) & 0x1F;
+        }
+        done += chunk;
     }
-    uint32_t rawRed = pox.getRed();
-    uint32_t rawIr  = pox.getIR();
-    pox.nextSample();
+}
+
+static void readOneSample(uint32_t &red, uint32_t &ir, uint32_t *rawIrOut = nullptr) {
+    while (qCount == 0) {
+        fifoFill();
+        if (qCount == 0) delay(2);
+    }
+    uint32_t rawRed = qRed[qHead];
+    uint32_t rawIr  = qIr[qHead];
+    uint32_t now    = qMs[qHead];
+    qHead = (qHead + 1) & 0x1F;
+    qCount--;
+    lastSampleMs = now;
     if (rawIrOut) *rawIrOut = rawIr;
 
     // Respiration works on the RAW signal. RIIV lives at 0.1 to 0.6 Hz,
     // which the 0.5 Hz highpass in PpgFilter would remove.
-    resp.addSample(rawIr, millis());
+    resp.addSample(rawIr, now);
+
+    // RR on a fixed one-second cadence, independent of the sample rate. At
+    // 10 Hz one loop() block takes 2.5 s, so tying it to loop() was slow.
+    if (respEnabled && now - respLastMs >= RESP_COMPUTE_MS) {
+        respLastMs = now;
+        respLatest = resp.compute();
+    }
 
     // Heart rate and SpO2 work on the conditioned signal, which keeps its
     // DC level so the ratio of ratios still has a denominator.
@@ -162,19 +241,33 @@ static void adjustGain(uint32_t irDc) {
     gainChanged = false;
     if (irDc < FINGER_IR_MIN) return;
 
-    if (irDc > IR_TARGET_HIGH && ledPower > LED_MIN) {
-        setLedPower(ledPower - 4 < LED_MIN ? LED_MIN : ledPower - 4);
-        gainChanged = true;
-    } else if (irDc < IR_TARGET_LOW && ledPower < LED_MAX) {
-        setLedPower(ledPower + 4 > LED_MAX ? LED_MAX : ledPower + 4);
-        gainChanged = true;
+    // Proportional step towards the middle of the target band, so the gain
+    // settles in a few blocks instead of many small steps. irDc here is the
+    // NEWEST block only, and one block is skipped after every change: the
+    // 100-sample buffer still holds samples from before the change, and
+    // correcting on those overshoots. The step is limited to x0.5 .. x2.
+    static bool holdOneBlock = false;
+    if (holdOneBlock) { holdOneBlock = false; return; }
+    if (irDc > IR_TARGET_HIGH || irDc < IR_TARGET_LOW) {
+        const float target = 0.5f * (IR_TARGET_LOW + IR_TARGET_HIGH);
+        float ratio = target / (float)irDc;
+        if (ratio < 0.5f) ratio = 0.5f;
+        if (ratio > 2.0f) ratio = 2.0f;
+        float next = (float)ledPower * ratio;
+        if (next < LED_MIN) next = LED_MIN;
+        if (next > LED_MAX) next = LED_MAX;
+        uint8_t nextLed = (uint8_t)(next + 0.5f);
+        if (nextLed != ledPower) {
+            setLedPower(nextLed);
+            gainChanged = true;
+            holdOneBlock = true;
+        }
     }
 
-    // A step in LED current is indistinguishable from a respiratory baseline
-    // shift, and RIIV is measured from exactly that baseline. It is also a
-    // step change in DC, which the PPG filters have to re-acquire.
+    // The PPG filters re-acquire the new DC level. Respiration does not
+    // restart: the step is spliced out of RIIV and RIAV (see respiration.h).
     if (gainChanged) {
-        resetRespiration();
+        resp.markDiscontinuity();
         redFilter.reset();
         irFilter.reset();
     }
@@ -200,7 +293,8 @@ static float acAmplitude(const uint32_t *signal, int32_t length) {
 // A finger arriving or leaving produces a large ramp that the detrending
 // above mistakes for an enormous pulse.
 static float dcDrift(const uint32_t *signal, int32_t length) {
-    const int32_t block = 25;
+    int32_t block = (length >= 50) ? 25 : length / 5;
+    if (block < 3) block = 3;
     double head = 0, tail = 0;
     for (int32_t i = 0; i < block; i++) head += signal[i];
     for (int32_t i = length - block; i < length; i++) tail += signal[i];
@@ -263,10 +357,17 @@ void setup() {
     if (!sirenLinkBeginReceiver()) while (true) delay(1000);
 
     Serial.println(F("Rest a fingertip lightly on the sensor and breathe normally."));
-    Serial.println(F("Respiration needs 30 s of uninterrupted contact."));
+    Serial.println(F("Respiration: first estimate after 16 s of steady contact, full 32 s window after that."));
 #if CSV_OUTPUT
     Serial.println(F("millis,fs,led,ir_dc,drift,pi,hr,hr_src,sdnn,intervals,spo2,rr,riiv,riav,rifv,spread,beats,tobj,tamb,tcore,accel_rms,accel_peak,gyro_rms"));
 #endif
+
+    // Start from an empty FIFO so the first burst is not stale
+    maxWriteReg(0x04, 0);
+    maxWriteReg(0x05, 0);
+    maxWriteReg(0x06, 0);
+    qHead = 0; qCount = 0;
+    sampleClockMs = 0.0;
 
     for (int32_t i = 0; i < BUFFER_LENGTH; i++) {
         readOneSample(redBuffer[i], irBuffer[i]);
@@ -280,16 +381,19 @@ void loop() {
         irBuffer[i - REFRESH_SAMPLES]  = irBuffer[i];
     }
 
-    uint32_t t0 = micros();
+    // Sample rate from the sample timestamps, not from how long the reads
+    // took: with burst FIFO reads, part of a block can come out of the queue
+    // instantly.
+    static uint32_t prevBlockEndMs = 0;
     for (int32_t i = BUFFER_LENGTH - REFRESH_SAMPLES; i < BUFFER_LENGTH; i++) {
         readOneSample(redBuffer[i], irBuffer[i],
                       &rawIrBlock[i - (BUFFER_LENGTH - REFRESH_SAMPLES)]);
     }
-    uint32_t elapsedUs = micros() - t0;
-    uint32_t blockEndMs = millis();
-    if (elapsedUs > 0) {
-        fsMeasured = (float)REFRESH_SAMPLES * 1000000.0f / (float)elapsedUs;
+    if (prevBlockEndMs != 0 && lastSampleMs > prevBlockEndMs) {
+        fsMeasured = (float)REFRESH_SAMPLES * 1000.0f / (float)(lastSampleMs - prevBlockEndMs);
     }
+    prevBlockEndMs = lastSampleMs;
+    const uint32_t blockEndMs = lastSampleMs;
 
     // Filter cutoffs are defined relative to the sample rate, so if the real
     // rate differs from what the filters were designed for, redesign them.
@@ -322,7 +426,19 @@ void loop() {
     }
     const bool weakPulse = finger && !unstable && perfusion < PI_MIN;
 
-    if (!finger || unstable) resetRespiration();
+    // Respiration: a lost finger clears the history, motion only masks the
+    // affected block. Drift is judged on the newest block rather than the
+    // whole buffer, so one movement does not blank several blocks.
+    if (!finger) {
+        resetRespiration();
+    } else {
+        float blockDrift = dcDrift(irBuffer + BUFFER_LENGTH - REFRESH_SAMPLES,
+                                   REFRESH_SAMPLES);
+        bool respArtefact = saturated || blockDrift > RESP_BLOCK_DRIFT_MAX;
+        uint32_t blockMs = (uint32_t)(REFRESH_SAMPLES * 1000.0f / fsMeasured);
+        resp.setArtefact(respArtefact, respArtefact ? blockMs : 0);
+    }
+    respEnabled = finger;
 
     // --- heart rate, rescaled to the measured acquisition rate ---
     int32_t hrCorrected = (int32_t)(heartRate * (fsMeasured / FS_NOMINAL) + 0.5f);
@@ -351,11 +467,7 @@ void loop() {
 
     bool spo2Usable = windowOk && spo2Valid;
 
-    // --- respiration, on its own slower cadence ---
-    if (++respCycle >= RESP_EVERY_N_CYCLES) {
-        respCycle = 0;
-        if (finger && !unstable) respLatest = resp.compute();
-    }
+    // --- respiration is computed once per second inside readOneSample() ---
 
     // --- temperature, received over the air ---
     TempPacket tpkt;
@@ -401,10 +513,11 @@ void loop() {
     else            Serial.print(F("SpO2=--    "));
 
     if (respLatest.valid) {
-        Serial.printf("RR=%4.1f/min(n=%u,sd=%3.1f)  ",
-                      respLatest.rate, respLatest.contributing, respLatest.spread);
+        Serial.printf("RR=%4.1f/min(n=%u,sd=%3.1f,%s)  ",
+                      respLatest.rate, respLatest.contributing, respLatest.spread,
+                      respLatest.preliminary ? "prelim" : "32s");
     } else if (!resp.ready()) {
-        Serial.printf("RR=--(%2.0f/30s,b=%lu)      ", resp.fillSeconds(), resp.beats());
+        Serial.printf("RR=--(%2.0f/%2.0fs,b=%lu)    ", resp.fillSeconds(), resp.minFillSeconds(), resp.beats());
     } else {
         Serial.printf("RR=--(%s,b=%lu)      ", respLatest.note, resp.beats());
     }
@@ -424,6 +537,7 @@ void loop() {
     }
     if (imuOk) Serial.printf("  accel=%.3fg", accelRms);
     Serial.printf("  rx=%lu/gap=%lu", sirenPacketsReceived(), sirenSequenceGaps());
+    if (fifoReadErrors) Serial.printf("  i2cErr=%lu", (unsigned long)fifoReadErrors);
 
     if (!finger)            Serial.print(F("  [no finger]"));
     else if (!filtersReady) Serial.print(F("  [filters settling]"));
@@ -442,5 +556,8 @@ void loop() {
     Serial.println();
 #endif
 
-    adjustGain(irDc);
+    // Gain control on the newest block only (see adjustGain)
+    uint64_t blockSum = 0;
+    for (int32_t i = BUFFER_LENGTH - REFRESH_SAMPLES; i < BUFFER_LENGTH; i++) blockSum += irBuffer[i];
+    adjustGain((uint32_t)(blockSum / REFRESH_SAMPLES));
 }

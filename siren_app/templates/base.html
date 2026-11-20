@@ -6,6 +6,7 @@
     <meta name="description" content="SIREN: triase dan pemantauan pasien di dalam ambulans, berjalan offline." />
     <title>{% block title %}{{ page_title }}{% endblock %} · SIREN</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='img/siren-mark.svg') }}" />
+    <meta name="theme-color" content="#0b2a45" />
     <script>
       // Set the theme before CSS paints. Light by default; dark is a manual choice.
       try {
@@ -23,7 +24,7 @@
           {% if back_href %}
           <a class="back" href="{{ back_href }}" aria-label="Kembali ke {{ back_label }}">{{ icon('caret-left') }}<span>{{ back_label }}</span></a>
           {% else %}
-          <a class="brand" href="/" aria-label="SIREN, beranda"><img src="{{ url_for('static', path='img/siren-logo.svg') }}" alt="SIREN" /></a>
+          <a class="brand" href="/" aria-label="SIREN, beranda"><img class="logo-on-light" src="{{ url_for('static', path='img/siren-logo.svg') }}" alt="SIREN" /><img class="logo-on-dark" src="{{ url_for('static', path='img/siren-logo-dark.svg') }}" alt="" /></a>
           {% endif %}
         </div>
 

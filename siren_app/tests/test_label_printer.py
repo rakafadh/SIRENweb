@@ -22,6 +22,22 @@ DETAIL = {
     "timeline": [{"captured_at": "2026-10-19T05:12:00+00:00", "hr": 118, "spo2": 92, "rr": 24, "temp": 36.4,
                   "sources": {"hr": "SENSOR"}}],
     "alerts": [{"alert": "shock index 1.23, curiga perdarahan", "first_seen": "2026-10-19T05:10:00+00:00"}],
+    "journey": {
+        "start": "2026-10-19T05:02:00+00:00", "end": "2026-10-19T05:37:30+00:00", "ended": True,
+        "duration_s": 2130.0,
+        "colours": {"MERAH": {"episodes": 1, "seconds": 380.0}, "KUNING": {"episodes": 2, "seconds": 860.0},
+                    "HIJAU": {"episodes": 1, "seconds": 890.0}},
+        "pickup": {
+            "triage": {"at": "2026-10-19T05:02:05+00:00", "colour": "KUNING", "news2_total": 3, "news2_measured": 6},
+            "vitals": {"hr": {"value": 96.0}, "spo2": {"value": 97.0}, "rr": None, "temp": {"value": 36.8}},
+            "acvpu": "alert", "on_oxygen": False, "pain": 7, "cuff": None,
+        },
+        "final": {
+            "triage": {"at": "2026-10-19T05:37:20+00:00", "colour": "MERAH", "news2_total": 9, "news2_measured": 7},
+            "vitals": {"hr": {"value": 118.0}, "spo2": {"value": 92.0}, "rr": {"value": 24.0}, "temp": {"value": 36.4}},
+            "acvpu": "voice", "on_oxygen": True, "pain": 7, "cuff": {"systolic": 96.0, "diastolic": 60.0},
+        },
+    },
 }
 
 
@@ -31,23 +47,45 @@ def cfg(**kwargs):
     return SimpleNamespace(**base)
 
 
-def test_qr_text_is_readable_summary():
+def test_qr_text_tells_the_trip_not_the_label():
     text = lp.qr_text(lp.label_facts(DETAIL))
     assert len(text.encode()) <= lp.QR_TEXT_LIMIT
     assert text.isascii()
-    assert text.startswith("SIREN SRN-261019-004\nMERAH NEWS2 9 (7/7)\nRina Marlina")
-    assert "N118 SpO2 92 RR24 S36.4" in text
-    assert "TD 96/60" in text
+    assert text.startswith("SIREN SRN-261019-004\nRina Marlina, 67 th, P\n")
+    local = lambda iso: lp._when(iso)  # noqa: E731  (device timezone)
+    assert f"PERJALANAN {local('2026-10-19T05:02:00+00:00')}-{local('2026-10-19T05:37:30+00:00')}, 36 mnt" in text
+    assert "MERAH 1x, 6 mnt\nKUNING 2x, 14 mnt\nHIJAU 1x, 15 mnt" in text
+    assert "JEMPUT" in text and "KUNING NEWS2 3 (6/7)\nN96 SpO2 97 RR- S36.8" in text
+    assert "TD - ACVPU A O2 tdk nyeri 7" in text
+    assert "AKHIR" in text and "MERAH NEWS2 9 (7/7)\nN118 SpO2 92 RR24 S36.4" in text
+    assert "TD 96/60 ACVPU V O2 ya nyeri 7" in text
     assert "RS RSUD Kota Depok" in text
     assert "shock index" in text
     assert "SIMULASI" not in text
+
+
+def test_unfinished_trip_is_measured_to_print_time():
+    open_trip = {**DETAIL, "journey": {**DETAIL["journey"], "ended": False}}
+    assert "(saat cetak)" in lp.qr_text(lp.label_facts(open_trip))
+
+
+def test_colour_never_reached_reads_zero():
+    calm = {**DETAIL, "journey": {**DETAIL["journey"], "colours": {
+        "MERAH": {"episodes": 0, "seconds": 0.0}, "KUNING": {"episodes": 0, "seconds": 0.0},
+        "HIJAU": {"episodes": 1, "seconds": 2130.0}}}}
+    assert "MERAH 0x\nKUNING 0x\nHIJAU 1x, 36 mnt" in lp.qr_text(lp.label_facts(calm))
+
+
+def test_qr_without_journey_falls_back_to_summary():
+    text = lp.qr_text(lp.label_facts({k: v for k, v in DETAIL.items() if k != "journey"}))
+    assert "MERAH NEWS2 9 (7/7)" in text and "N118 SpO2 92 RR24 S36.4" in text
 
 
 def test_long_free_text_cannot_push_out_the_essentials():
     wordy = {**DETAIL, "patient": {**DETAIL["patient"], "complaint": "x" * 400, "display_name": "y" * 150}}
     text = lp.qr_text(lp.label_facts(wordy))
     assert len(text) <= lp.QR_TEXT_LIMIT
-    assert "MERAH NEWS2" in text and "TD 96/60" in text
+    assert "PERJALANAN" in text and "TD 96/60" in text
 
 
 def test_simulated_data_is_marked_on_label():

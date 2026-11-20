@@ -94,7 +94,7 @@ Firmware cukup ditanam **sekali** dari laptop. Setelah itu ESP32 menjalankannya 
 |---|---|
 | Nadi, SpO₂ | Beberapa detik |
 | Suhu | ±3 detik |
-| Laju napas | ±30 detik |
+| Laju napas | ±20 detik (perkiraan awal setelah 16 detik, penuh setelah 32 detik) |
 | Estimasi TD (PPG) | ±30 detik gelombang |
 
 ### A5. Kalau ada masalah di laptop
@@ -278,7 +278,7 @@ Lakukan di Orange Pi yang sudah terpasang di ambulans, dengan kedua ESP32 dan pr
 | No | Uji | Hasil yang diharapkan | ✓ |
 |---|---|---|---|
 | 6 | Tempel jari di MAX30102 | Nadi dan SpO₂ muncul dalam beberapa detik, berlabel **SENSOR** | ☐ |
-| 7 | Tahan jari 30 detik | Laju napas dan Estimasi TD (PPG) muncul | ☐ |
+| 7 | Tahan jari 30 detik | Laju napas muncul (±20 detik) dan Estimasi TD (PPG) muncul | ☐ |
 | 8 | Arahkan MLX90614 ke dahi | Suhu muncul dalam ±3 detik | ☐ |
 | 9 | Angkat jari | Nilai PPG kosong, tertulis "Jari tidak terdeteksi" | ☐ |
 | 10 | Cabut kabel USB node PPG, lalu colok lagi | Dalam 5 detik nilai hilang dan titik merah; setelah dicolok, tersambung sendiri dalam ±3 detik | ☐ |

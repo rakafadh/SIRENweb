@@ -4,7 +4,8 @@
 {% block content %}
 <div class="home">
   <section class="home-hero" aria-label="SIREN">
-    <img class="home-logo" src="{{ url_for('static', path='img/siren-logo.svg') }}" alt="SIREN" />
+    <img class="home-logo logo-on-light" src="{{ url_for('static', path='img/siren-logo.svg') }}" alt="SIREN" />
+    <img class="home-logo logo-on-dark" src="{{ url_for('static', path='img/siren-logo-dark.svg') }}" alt="" />
     <p class="home-tagline">Triase dan pemantauan pasien di dalam ambulans</p>
     <p class="home-meta"><span>Unit {{ ambulance_id }}</span><span id="homeDate"></span></p>
     <p class="home-hint">Tekan <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> untuk memilih menu</p>

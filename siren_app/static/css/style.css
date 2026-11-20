@@ -1,7 +1,8 @@
 /* SIREN · ambulance console
    App-style interface for a 1024x600 Chromium kiosk, keyboard and mouse.
-   Light by default, dark on request. Brand: logo green; action colour:
-   the logo's blue, so buttons never read as the HIJAU triage category. */
+   Light by default, dark on request. Brand colours come from the logo:
+   navy #0B2A45 and cyan #22C7DD. Actions use navy (light theme) or cyan
+   (dark theme), so buttons never read as a triage category. */
 
 @font-face {
   font-family: "Plus Jakarta Sans";
@@ -20,25 +21,29 @@
 :root,
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f2f4f7;
+  --bg: #f1f5f8;
   --surface: #ffffff;
-  --surface-2: #f7f8fa;
-  --surface-3: #eceff3;
-  --line: #e4e7ec;
-  --line-strong: #d0d5dd;
-  --line-input: #d0d5dd;
-  --text: #101828;
-  --text-2: #475467;
-  --text-3: #8a94a6;
+  --surface-2: #f6f9fb;
+  --surface-3: #e8eef3;
+  --line: #e0e7ed;
+  --line-strong: #cad4dd;
+  --line-input: #cad4dd;
+  --text: #0d1f30;
+  --text-2: #4a5d70;
+  --text-3: #8496a7;
 
-  --accent: #10648e;
-  --accent-hover: #0c5376;
+  --accent: #0b2a45;
+  --accent-hover: #143b5e;
   --accent-ink: #ffffff;
-  --accent-fg: #10648e;
-  --accent-soft: rgba(16, 100, 142, 0.10);
-  --accent-soft-2: rgba(16, 100, 142, 0.16);
-  --focus: #10648e;
-  --brand: #04bb79;
+  --accent-fg: #0b2a45;
+  --accent-soft: rgba(11, 42, 69, 0.07);
+  --accent-soft-2: rgba(11, 42, 69, 0.13);
+  --accent-shadow: rgba(11, 42, 69, 0.26);
+  --focus: #0e9fb3;
+  --brand: #22c7dd;
+  --brand-ink: #0b2a45;
+  --brand-fg: #0a7f90;
+  --brand-soft: rgba(34, 199, 221, 0.14);
 
   --red: #d63c35;        --red-ink: #ffffff;   --red-fg: #b42d27;   --red-soft: rgba(214, 60, 53, 0.10);
   --amber: #f0b02b;      --amber-ink: #1d1402; --amber-fg: #8a5c00; --amber-soft: rgba(240, 176, 43, 0.16);
@@ -49,30 +54,34 @@
   --shadow-pop: 0 18px 40px rgba(16, 24, 40, 0.16), 0 2px 6px rgba(16, 24, 40, 0.08);
   --thumb-shadow: 0 1px 3px rgba(16, 24, 40, 0.14), 0 1px 1px rgba(16, 24, 40, 0.06);
   --card-border: transparent;
-  --skeleton: linear-gradient(90deg, #eceff3 0%, #f7f8fa 50%, #eceff3 100%);
+  --skeleton: linear-gradient(90deg, #e8eef3 0%, #f6f9fb 50%, #e8eef3 100%);
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0c0f13;
-  --surface: #161a20;
-  --surface-2: #1c2128;
-  --surface-3: #242a32;
-  --line: #262d36;
-  --line-strong: #343d48;
-  --line-input: #3a4450;
-  --text: #e9edf2;
-  --text-2: #a6b0bc;
-  --text-3: #6f7a87;
+  --bg: #06111b;
+  --surface: #0c1c2a;
+  --surface-2: #102434;
+  --surface-3: #162e41;
+  --line: #1a3347;
+  --line-strong: #25445b;
+  --line-input: #2c4c64;
+  --text: #e7f0f6;
+  --text-2: #9db2c3;
+  --text-3: #66809a;
 
-  --accent: #2878aa;
-  --accent-hover: #3386b8;
-  --accent-ink: #ffffff;
-  --accent-fg: #6cb6e0;
-  --accent-soft: rgba(76, 160, 210, 0.16);
-  --accent-soft-2: rgba(76, 160, 210, 0.26);
-  --focus: #6cb6e0;
-  --brand: #04bb79;
+  --accent: #22c7dd;
+  --accent-hover: #4ad3e5;
+  --accent-ink: #0b2a45;
+  --accent-fg: #5fd8e8;
+  --accent-soft: rgba(34, 199, 221, 0.13);
+  --accent-soft-2: rgba(34, 199, 221, 0.22);
+  --accent-shadow: rgba(34, 199, 221, 0.22);
+  --focus: #5fd8e8;
+  --brand: #22c7dd;
+  --brand-ink: #0b2a45;
+  --brand-fg: #5fd8e8;
+  --brand-soft: rgba(34, 199, 221, 0.14);
 
   --red: #d8463f;        --red-ink: #ffffff;   --red-fg: #ff8a80;   --red-soft: rgba(216, 70, 63, 0.18);
   --amber: #e2b13c;      --amber-ink: #1c1402; --amber-fg: #e8bd57; --amber-soft: rgba(226, 177, 60, 0.16);
@@ -82,8 +91,8 @@
   --shadow-2: 0 6px 18px rgba(0, 0, 0, 0.35);
   --shadow-pop: 0 18px 40px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.35);
   --thumb-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-  --card-border: #262d36;
-  --skeleton: linear-gradient(90deg, #1c2128 0%, #262d36 50%, #1c2128 100%);
+  --card-border: #1a3347;
+  --skeleton: linear-gradient(90deg, #102434 0%, #1a3347 50%, #102434 100%);
 }
 
 :root {
@@ -172,7 +181,11 @@ kbd {
 .appbar-title { font-size: 1.02rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .brand { display: inline-flex; align-items: center; }
-.brand img { height: 34px; width: auto; display: block; }
+.brand img { height: 30px; width: auto; display: block; }
+/* Two logo files: TERANG (navy lower half) on light, GELAP (white lower half) on dark */
+.logo-on-dark { display: none !important; }
+:root[data-theme="dark"] .logo-on-light { display: none !important; }
+:root[data-theme="dark"] .logo-on-dark { display: block !important; }
 
 .back {
   display: inline-flex; align-items: center; gap: 2px;
@@ -254,7 +267,7 @@ kbd {
   max-width: 1120px; min-height: calc(100dvh - var(--appbar-h)); margin: 0 auto; padding: 20px 28px 28px;
 }
 .home-hero { display: flex; flex-direction: column; gap: 10px; animation: rise 420ms var(--ease) both; }
-.home-logo { width: min(330px, 100%); height: auto; margin-left: -6px; }
+.home-logo { width: min(300px, 100%); height: auto; margin: 0 0 6px; }
 .home-tagline { font-size: 1.12rem; font-weight: 600; color: var(--text); max-width: 26ch; line-height: 1.35; text-wrap: balance; }
 .home-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.86rem; color: var(--text-2); }
 .home-meta span + span::before { content: "·"; margin-right: 14px; color: var(--text-3); }
@@ -291,19 +304,22 @@ kbd {
 .tile-primary {
   min-height: 210px; padding: 24px; gap: 18px;
   background: var(--accent); color: var(--accent-ink); border-color: transparent;
-  box-shadow: 0 10px 24px rgba(16, 100, 142, 0.28);
+  box-shadow: 0 10px 24px var(--accent-shadow);
+  background-image: radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--brand) 22%, transparent) 0%, transparent 55%);
 }
-.tile-primary:hover { background: var(--accent-hover); box-shadow: 0 14px 30px rgba(16, 100, 142, 0.34); }
-.tile-primary .tile-icon { width: 60px; height: 60px; border-radius: 18px; background: rgba(255, 255, 255, 0.18); color: #fff; }
+.tile-primary:hover { background-color: var(--accent-hover); box-shadow: 0 14px 30px var(--accent-shadow); }
+.tile-primary .tile-icon { width: 60px; height: 60px; border-radius: 18px; background: var(--brand); color: var(--brand-ink); }
+:root[data-theme="dark"] .tile-primary { background-image: none; }
+:root[data-theme="dark"] .tile-primary .tile-icon { background: var(--brand-ink); color: var(--brand); }
 .tile-primary .tile-icon .icon svg { width: 32px; height: 32px; }
 .tile-primary .tile-text strong { font-size: 1.55rem; }
-.tile-primary .tile-text > span { color: rgba(255, 255, 255, 0.85); font-size: 0.92rem; }
-.tile-primary .tile-patient { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-weight: 600; color: #fff !important; }
-.tile-primary .tile-patient .tag:not(.red):not(.yellow):not(.green) { background: rgba(255, 255, 255, 0.2); color: #fff; }
-.tile-primary .tile-key { color: #fff; background: transparent; border-color: rgba(255, 255, 255, 0.5); }
+.tile-primary .tile-text > span { color: color-mix(in srgb, var(--accent-ink) 82%, transparent); font-size: 0.92rem; }
+.tile-primary .tile-patient { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-weight: 600; color: var(--accent-ink) !important; }
+.tile-primary .tile-patient .tag:not(.red):not(.yellow):not(.green) { background: color-mix(in srgb, var(--accent-ink) 18%, transparent); color: var(--accent-ink); }
+.tile-primary .tile-key { color: var(--accent-ink); background: transparent; border-color: color-mix(in srgb, var(--accent-ink) 50%, transparent); }
 .tile-go {
   margin-left: auto; display: inline-flex; align-items: center; justify-content: center; flex: none;
-  width: 44px; height: 44px; border-radius: 50%; background: rgba(255, 255, 255, 0.18);
+  width: 44px; height: 44px; border-radius: 50%; background: color-mix(in srgb, var(--accent-ink) 16%, transparent);
   transition: transform 200ms var(--spring);
 }
 .tile-primary:hover .tile-go { transform: translateX(3px); }
@@ -321,7 +337,7 @@ kbd {
 .btn:active { transform: scale(0.97); }
 .btn[disabled], .btn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; transform: none; }
 .btn kbd { margin-left: 2px; background: transparent; color: inherit; border-color: currentColor; opacity: 0.55; }
-.btn-primary { background: var(--accent); color: var(--accent-ink); box-shadow: 0 2px 6px rgba(16, 100, 142, 0.25); }
+.btn-primary { background: var(--accent); color: var(--accent-ink); box-shadow: 0 2px 6px var(--accent-shadow); }
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-danger { background: var(--red); color: var(--red-ink); }
 .btn-danger:hover { filter: brightness(1.06); background: var(--red); }
@@ -763,4 +779,89 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ------------------------------------------------------------ handover summary
+   Numbers where a clinician acts on the exact value (pickup vs handover,
+   durations, counts); charts where the shape over time is the point (triage
+   colour track, vital-sign trends). One time axis for all of them. */
+:root { --chart-ink: var(--brand-fg); }
+.summary > * + * { margin-top: 12px; }
+.summary .card-title { flex-wrap: wrap; }
+
+.journey-head { display: grid; grid-template-columns: minmax(150px, auto) 1fr; gap: 18px; align-items: center; }
+.journey-total { display: flex; flex-direction: column; gap: 2px; }
+.journey-duration { font-size: 2.15rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; color: var(--text); }
+.recap { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
+.recap-item {
+  display: grid; grid-template-columns: auto 1fr; grid-template-areas: "sw name" "count count" "time time";
+  column-gap: 8px; row-gap: 2px; align-items: center;
+  padding: 10px 12px; background: var(--surface-2); border-radius: var(--r);
+}
+.recap-swatch { grid-area: sw; width: 10px; height: 10px; border-radius: 3px; background: var(--text-3); }
+.recap-item.red .recap-swatch { background: var(--red); }
+.recap-item.yellow .recap-swatch { background: var(--amber); }
+.recap-item.green .recap-swatch { background: var(--green); }
+.recap-name { grid-area: name; font-size: 0.76rem; font-weight: 700; letter-spacing: 0.04em; color: var(--text-2); }
+.recap-count { grid-area: count; font-size: 1.4rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; }
+.recap-time { grid-area: time; font-size: 0.8rem; color: var(--text-2); }
+.recap-item.is-none { opacity: 0.55; }
+
+.track-wrap { margin-top: 14px; }
+.track-title { display: flex; justify-content: space-between; gap: 8px; margin: 0 0 4px; font-size: 0.78rem; font-weight: 600; color: var(--text-3); }
+.track-readout { color: var(--text); font-variant-numeric: tabular-nums; }
+.track, .chart-plot { width: 100%; touch-action: pan-y; }
+.track svg, .chart-plot svg { display: block; overflow: visible; }
+.track-bg { fill: var(--surface-3); }
+.seg-red { fill: var(--red); }
+.seg-yellow { fill: var(--amber); }
+.seg-green { fill: var(--green); }
+.seg-none { fill: var(--text-3); }
+
+.ax-label { fill: var(--text-3); font-family: var(--font); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.grid { stroke: var(--line); stroke-width: 1; }
+.band { fill: var(--surface-3); opacity: 0.75; }
+.threshold { stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 3 3; }
+.threshold-label { fill: var(--text-3); font-family: var(--font); font-size: 10px; font-weight: 600; }
+.line { fill: none; stroke: var(--chart-ink); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.dot { fill: var(--chart-ink); stroke: var(--surface); stroke-width: 2; }
+.end-label { fill: var(--text); font-family: var(--font); font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.crosshair { stroke: var(--text-2); stroke-width: 1; pointer-events: none; }
+
+.summary-row { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.summary-row-even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.compare { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.compare thead th { padding: 0 8px 6px; text-align: left; font-size: 0.74rem; font-weight: 600; color: var(--text-3); white-space: nowrap; }
+.compare tbody th { padding: 6px 8px 6px 0; text-align: left; font-weight: 500; color: var(--text-2); white-space: nowrap; }
+.compare td { padding: 6px 8px; border-top: 1px solid var(--line); }
+.compare tbody th { border-top: 1px solid var(--line); }
+.compare tbody tr:first-child th, .compare tbody tr:first-child td { border-top: 0; }
+.compare .unit { color: var(--text-3); font-size: 0.8em; }
+.delta { display: inline-flex; align-items: baseline; gap: 4px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
+.delta-arrow { font-size: 0.7em; }
+.delta.is-worse { color: var(--red-fg); }
+.delta.is-better { color: var(--green-fg); }
+.delta.is-same { color: var(--text-3); font-weight: 500; }
+
+.alert-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.alert-list li { display: flex; align-items: baseline; gap: 10px; padding: 8px 10px; font-size: 0.86rem; background: var(--surface-2); border-radius: var(--r-sm); }
+.alert-list li.danger { background: var(--red-soft); color: var(--red-fg); }
+.alert-list li.quiet { background: transparent; padding-left: 0; color: var(--text-3); }
+.alert-when { flex: none; font-size: 0.78rem; color: var(--text-3); }
+.alert-list li.danger .alert-when { color: inherit; opacity: 0.8; }
+.alert-what { font-weight: 600; }
+
+.trend-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 22px; }
+.chart { margin: 0; min-width: 0; }
+.chart-wide { grid-column: 1 / -1; }
+.chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+.chart-name { font-size: 0.84rem; font-weight: 700; color: var(--text-2); }
+.chart-value b { font-size: 1.05rem; font-weight: 800; }
+.chart-value .unit { font-size: 0.78rem; color: var(--text-3); }
+.chart-value .faint { font-size: 0.76rem; }
+
+@media (max-width: 760px) {
+  .journey-head, .summary-row, .summary-row-even, .trend-grid { grid-template-columns: minmax(0, 1fr); }
+  .recap { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 }
