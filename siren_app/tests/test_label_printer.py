@@ -197,3 +197,9 @@ def test_qr_drops_whole_lines_instead_of_cutting_one(monkeypatch):
     kept = text.splitlines()
     assert len(text) <= 500 and len(kept) < len(full)
     assert kept == full[: len(kept)]
+
+
+def test_complaint_survives_a_full_qr():
+    busy = {**DETAIL, "alerts": [{"alert": "a" * 40}, {"alert": "b" * 40}],
+            "patient": {**DETAIL["patient"], "destination": "d" * 60}}
+    assert "Keluhan: Jatuh dari motor" in lp.qr_text(lp.label_facts(busy))
