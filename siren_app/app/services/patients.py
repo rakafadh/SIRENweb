@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -223,6 +223,110 @@ def patient_detail(db: Session, patient: Patient) -> dict[str, Any]:
         "timeline": timeline,
         "events": [serialize_event(e) for e in patient.events],
         "alerts": list(alerts_seen.values()),
+        "journey": journey_summary(patient, readings, triages),
+    }
+
+
+# How far into the trip a value still counts as "at pickup", and how far back
+# from the end it still counts as "final". Respiration needs about 20 s before
+# its first estimate, so the first reading alone often lacks it.
+PICKUP_WINDOW_S = 180
+FINAL_WINDOW_S = 120
+COLOURS = ("MERAH", "KUNING", "HIJAU")
+JOURNEY_VITALS = ("hr", "spo2", "rr", "temp")
+
+
+def journey_summary(patient: Patient, readings: list[VitalReading], triages: list[TriageResult],
+                    now: datetime | None = None) -> dict[str, Any]:
+    """Trip length, time spent in each triage colour, and pickup versus final condition.
+
+    Snapshots are stored every SNAPSHOT_INTERVAL_S and at every colour change,
+    so each snapshot's colour holds until the next one. The trip ends at
+    handover, or now while the patient is still on board.
+    """
+    start = patient.created_at
+    end = patient.handed_over_at or now or utcnow()
+    if start is not None and end < start:
+        end = start
+
+    segments: list[dict[str, Any]] = []
+    for i, tri in enumerate(triages):
+        seg_start = tri.created_at
+        seg_end = triages[i + 1].created_at if i + 1 < len(triages) else end
+        if seg_end < seg_start:
+            seg_end = seg_start
+        if segments and segments[-1]["colour"] == tri.colour:
+            segments[-1]["end"] = seg_end
+        else:
+            segments.append({"colour": tri.colour, "start": seg_start, "end": seg_end})
+
+    colours = {c: {"episodes": 0, "seconds": 0.0} for c in COLOURS}
+    for seg in segments:
+        if seg["colour"] in colours:
+            colours[seg["colour"]]["episodes"] += 1
+            colours[seg["colour"]]["seconds"] += (seg["end"] - seg["start"]).total_seconds()
+
+    def pick(rows: list[VitalReading], window_start: datetime | None, window_end: datetime | None) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for param in JOURNEY_VITALS:
+            for row in rows:
+                if window_start and row.captured_at < window_start:
+                    continue
+                if window_end and row.captured_at > window_end:
+                    continue
+                value = getattr(row, param)
+                if value is not None:
+                    out[param] = {"value": value, "at": row.captured_at.isoformat(),
+                                  "source": (row.sources or {}).get(param)}
+                    break
+            else:
+                out[param] = None
+        return out
+
+    pickup_vitals = pick(readings, None, start + timedelta(seconds=PICKUP_WINDOW_S) if start else None)
+    final_vitals = pick(list(reversed(readings)), end - timedelta(seconds=FINAL_WINDOW_S), None)
+
+    # Consciousness, oxygen and pain at pickup come from the START event; the
+    # patient row holds the latest values.
+    start_event = next((e for e in patient.events if e.kind == "START"), None)
+    at_start = (start_event.data or {}) if start_event else {}
+    first_cuff = next((e for e in patient.events if e.kind == "CUFF_BP" and e.data), None)
+
+    def triage_view(tri: TriageResult | None) -> dict[str, Any] | None:
+        if tri is None:
+            return None
+        return {"at": tri.created_at.isoformat(), "colour": tri.colour, "news2_total": tri.news2_total,
+                "news2_measured": tri.news2_measured, "source": tri.source,
+                "start_colour": tri.start_colour, "start_reason": tri.start_reason,
+                "shock_index": tri.shock_index}
+
+    return {
+        "start": start.isoformat() if start else None,
+        "end": end.isoformat(),
+        "ended": patient.handed_over_at is not None,
+        "duration_s": (end - start).total_seconds() if start else 0.0,
+        "segments": [{"colour": s["colour"], "start": s["start"].isoformat(), "end": s["end"].isoformat()}
+                     for s in segments],
+        "colours": colours,
+        "pickup": {
+            "triage": triage_view(triages[0] if triages else None),
+            "vitals": pickup_vitals,
+            "acvpu": at_start.get("acvpu", patient.acvpu),
+            "on_oxygen": at_start.get("on_oxygen", patient.on_oxygen),
+            "pain": at_start.get("pain", patient.pain),
+            "cuff": ({"systolic": first_cuff.data.get("systolic"), "diastolic": first_cuff.data.get("diastolic"),
+                      "at": first_cuff.created_at.isoformat()} if first_cuff else None),
+        },
+        "final": {
+            "triage": triage_view(triages[-1] if triages else None),
+            "vitals": final_vitals,
+            "acvpu": patient.acvpu,
+            "on_oxygen": patient.on_oxygen,
+            "pain": patient.pain,
+            "cuff": ({"systolic": patient.systolic, "diastolic": patient.diastolic,
+                      "at": patient.bp_cuff_at.isoformat() if patient.bp_cuff_at else None}
+                     if patient.systolic is not None else None),
+        },
     }
 
 
