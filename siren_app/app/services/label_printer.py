@@ -174,8 +174,14 @@ def qr_text(facts: dict[str, Any]) -> str:
         f"{facts['unit']}; RS {_clip(facts['destination'], 26)}",
         f"Keluhan: {_clip(facts['complaint'], 44)}",
     ]
-    text = "\n".join(lines).encode("ascii", "replace").decode("ascii")
-    return text if len(text) <= QR_TEXT_LIMIT else text[: QR_TEXT_LIMIT - 2] + ".."
+    # Whole lines only: a line cut in half ("Keluhan: ..") reads as an error.
+    kept: list[str] = []
+    for line in lines:
+        line = line.encode("ascii", "replace").decode("ascii")
+        if len("\n".join([*kept, line])) > QR_TEXT_LIMIT:
+            break
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def sample_detail(ambulance_id: str) -> dict[str, Any]:
