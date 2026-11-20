@@ -7,12 +7,16 @@ That font is Latin-1 only, hence the small transliteration table.
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fpdf import FPDF
 
 from app.services.patients import ACVPU_LABEL
 
+LOGO = Path(__file__).resolve().parents[2] / "static" / "img" / "siren-logo.svg"
+NAVY = (11, 42, 69)      # logo navy, #0B2A45
+CYAN = (34, 199, 221)    # logo cyan, #22C7DD
 COLOUR_RGB = {"MERAH": (192, 57, 43), "KUNING": (224, 168, 0), "HIJAU": (46, 139, 87)}
 NEWS2_PART_LABEL = {
     "respirasi": "Laju napas", "spo2": "SpO2", "oksigen": "Oksigen tambahan", "sistolik": "Sistolik (manset)",
@@ -54,9 +58,9 @@ class _Doc(FPDF):
     def heading(self, text: str):
         self.ln(2)
         self.set_font("Helvetica", "B", 10)
-        self.set_text_color(30, 30, 30)
+        self.set_text_color(*NAVY)
         self.cell(0, 6, _t(text), new_x="LMARGIN", new_y="NEXT")
-        self.set_draw_color(200, 200, 200)
+        self.set_draw_color(*CYAN)
         self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
         self.ln(1.5)
 
@@ -94,7 +98,12 @@ def build_handover_pdf(detail: dict[str, Any], ambulance_id: str, bp_label: dict
     pdf.alias_nb_pages()
     pdf.add_page()
 
+    try:
+        pdf.image(str(LOGO), x=pdf.w - pdf.r_margin - 34, y=10, w=34)
+    except Exception:   # a broken logo file must never block the handover document
+        pass
     pdf.set_font("Helvetica", "B", 15)
+    pdf.set_text_color(*NAVY)
     pdf.cell(0, 8, "Ringkasan Serah Terima Pasien", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", size=8.5)
     pdf.set_text_color(90, 90, 90)
@@ -132,6 +141,10 @@ def build_handover_pdf(detail: dict[str, Any], ambulance_id: str, bp_label: dict
         ("Mulai pemantauan", _when(patient["created_at"])),
         ("Serah terima", _when(patient["handed_over_at"]) if patient["handed_over_at"] else "belum"),
     ])
+
+    journey = detail.get("journey")
+    if journey:
+        _journey_section(pdf, journey)
 
     pdf.heading("Penilaian saat penjemputan (START)")
     pdf.pairs([
@@ -222,6 +235,62 @@ def build_handover_pdf(detail: dict[str, Any], ambulance_id: str, bp_label: dict
                   rows, [18, 18, 14, 14, 14, 14, 14, 16, 60])
 
     return bytes(pdf.output())
+
+
+def _minutes(seconds: float) -> str:
+    if seconds < 60:
+        return "<1 menit"
+    hours, mins = divmod(int(round(seconds / 60)), 60)
+    return f"{hours} jam {mins} menit" if hours else f"{mins} menit"
+
+
+def _journey_section(pdf: _Doc, journey: dict[str, Any]) -> None:
+    """Trip length, a colour band of the triage category over time, and pickup versus final."""
+    pdf.heading("Ringkasan perjalanan")
+    until = _when(journey["end"], "%H:%M") + ("" if journey["ended"] else " (saat dokumen dibuat)")
+    pdf.pairs([("Lama perjalanan", f"{_minutes(journey['duration_s'])}, {_when(journey['start'], '%H:%M')} sampai {until}")])
+
+    total = journey["duration_s"] or 1.0
+    start = datetime.fromisoformat(journey["start"]) if journey["start"] else None
+    x0, width, y, h = pdf.l_margin, pdf.w - pdf.l_margin - pdf.r_margin, pdf.get_y() + 1, 6
+    pdf.set_fill_color(230, 230, 230)
+    pdf.rect(x0, y, width, h, style="F")
+    if start:
+        for seg in journey["segments"]:
+            a = (datetime.fromisoformat(seg["start"]) - start).total_seconds() / total
+            b = (datetime.fromisoformat(seg["end"]) - start).total_seconds() / total
+            pdf.set_fill_color(*COLOUR_RGB.get(seg["colour"], (150, 150, 150)))
+            pdf.rect(x0 + width * max(0.0, a), y, width * max(0.0, min(1.0, b) - max(0.0, a)), h, style="F")
+    pdf.set_y(y + h + 2)
+    recap = []
+    for colour in ("MERAH", "KUNING", "HIJAU"):
+        c = journey["colours"][colour]
+        recap.append(f"{colour} {c['episodes']} kali ({_minutes(c['seconds'])})" if c["episodes"] else f"{colour} tidak pernah")
+    pdf.pairs([("Rekap kategori", "; ".join(recap))])
+
+    def col(side: dict[str, Any]) -> list[str]:
+        tri = side.get("triage") or {}
+        v = side.get("vitals") or {}
+        val = lambda k, d=0: _num((v.get(k) or {}).get("value"), d)  # noqa: E731
+        cuff = side.get("cuff")
+        news = tri.get("news2_total")
+        return [
+            _when(tri.get("at"), "%H:%M") if tri else "-",
+            tri.get("colour") or "-",
+            "-" if news is None else f"{news} ({tri.get('news2_measured', 0)}/7)",
+            val("hr"), val("spo2"), val("rr"), val("temp", 1),
+            f"{_num(cuff['systolic'])}/{_num(cuff['diastolic'])}" if cuff and cuff.get("systolic") is not None else "-",
+            ACVPU_LABEL.get(side.get("acvpu"), side.get("acvpu") or "-").split(" (")[0],
+            "ya" if side.get("on_oxygen") else "tidak",
+            "-" if side.get("pain") is None else f"{side['pain']}/10",
+        ]
+
+    labels = ["Waktu", "Kategori", "NEWS2", "Nadi (/menit)", "SpO2 (%)", "Laju napas (/menit)", "Suhu (C)",
+              "TD manset (mmHg)", "Kesadaran", "Oksigen tambahan", "Skala nyeri"]
+    pickup, final = col(journey["pickup"]), col(journey["final"])
+    pdf.ln(1)
+    pdf.table(["Parameter", "Saat penjemputan", "Saat serah terima"],
+              [[label, a, b] for label, a, b in zip(labels, pickup, final)], [46, 50, 50])
 
 
 def _thin(rows: list[dict], limit: int) -> list[dict]:
