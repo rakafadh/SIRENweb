@@ -186,3 +186,14 @@ def test_print_endpoint(client, app_module, tmp_path, monkeypatch):
     preview = client.get(f"/api/patients/{patient['id']}/label.png")
     assert preview.headers["content-type"] == "image/png"
     assert client.post("/api/printer/test").status_code == 200
+
+
+def test_qr_drops_whole_lines_instead_of_cutting_one(monkeypatch):
+    noisy = {**DETAIL, "alerts": [{"alert": "a" * 40}, {"alert": "b" * 40}],
+             "patient": {**DETAIL["patient"], "display_name": "n" * 60, "destination": "d" * 60, "complaint": "k" * 80}}
+    text = lp.qr_text(lp.label_facts(noisy))
+    monkeypatch.setattr(lp, "QR_TEXT_LIMIT", 10_000)
+    full = lp.qr_text(lp.label_facts(noisy)).splitlines()
+    kept = text.splitlines()
+    assert len(text) <= 500 and len(kept) < len(full)
+    assert kept == full[: len(kept)]
