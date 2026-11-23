@@ -1,9 +1,15 @@
-"""Handover label for a 58 mm thermal printer: readable text plus a QR summary.
+"""Handover label for a 58 mm thermal printer: key numbers on paper, the trip in the QR.
 
 The label is drawn as a 1-bit image and sent with the ESC/POS raster command
 (GS v 0), which nearly every 58 mm receipt printer understands, whatever its
-fonts or code page. The QR holds plain text so any phone camera can read it
-without an app or a network.
+fonts or code page.
+
+Paper carries what a nurse needs with no signal: category, NEWS2, identity,
+latest vitals, cuff and PPG blood pressure, destination. The QR is a link to
+the SIREN QR viewer with the whole trip packed after the '#' (app/siren_qr,
+built by app/services/transport_record.py): scanning it shows the trend
+graphs and the current versus worst condition. The phone needs internet once
+to load the viewer; the patient data in the fragment never reaches a server.
 
 Backends (PRINTER_BACKEND):
   none    printing disabled
@@ -21,16 +27,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import qrcode
 import serial
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from app.config import Settings, settings
+from app.services.transport_record import transport_record
+from app.siren_qr import PayloadError, QrResult
+from app.siren_qr import make as make_qr
 
 log = logging.getLogger("siren.printer")
 
 ACVPU_SHORT = {"alert": "A", "confusion": "C", "voice": "V", "pain": "P", "unresponsive": "U"}
-QR_TEXT_LIMIT = 500     # bytes; version 17 at error correction M holds 504
 BAND_ROWS = 128         # rows per raster command; small printers have small buffers
 
 _FONT_CANDIDATES = {
@@ -67,8 +74,9 @@ def _clip(text: str | None, limit: int) -> str:
 def label_facts(detail: dict[str, Any]) -> dict[str, Any]:
     patient = detail["patient"]
     latest = detail["latest_triage"] or {}
-    first = detail["first_triage"] or {}
     last = detail["timeline"][-1] if detail["timeline"] else {}
+    ppg = next((r for r in reversed(detail["timeline"])
+                if r.get("bp_est_status") == "OK" and r.get("bp_est_sbp") is not None), None)
     sex = {"Laki-laki": "L", "Perempuan": "P"}.get(patient["sex"], "kelamin -")
     age = f"{patient['age']} th" if patient["age"] is not None else "usia -"
     news = latest.get("news2_total")
@@ -76,112 +84,50 @@ def label_facts(detail: dict[str, Any]) -> dict[str, Any]:
         "code": patient["code"],
         "colour": latest.get("colour") or "BELUM ADA DATA",
         "news": "-" if news is None else f"{news} ({latest.get('news2_measured', 0)}/7)",
-        "source": latest.get("source") or "-",
-        "start": f"{first.get('start_colour') or '-'} - {first.get('start_reason') or '-'}",
-        "worst": detail.get("worst_colour") or "-",
-        "name": patient["display_name"],
+        "name": patient["display_name"] or "Tanpa identitas",
         "who": f"{age}, {sex}",
-        "complaint": patient["complaint"],
         "vitals": (f"N {_num(last.get('hr'))}  SpO2 {_num(last.get('spo2'))}  "
                    f"RR {_num(last.get('rr'))}  S {_num(last.get('temp'), 1)}"),
-        "vitals_short": (f"N{_num(last.get('hr'))} SpO2 {_num(last.get('spo2'))} "
-                         f"RR{_num(last.get('rr'))} S{_num(last.get('temp'), 1)}"),
         "vitals_at": _when(last.get("captured_at")),
         "cuff": (f"{_num(patient['systolic'])}/{_num(patient['diastolic'])} ({_when(patient['bp_cuff_at'])})"
                  if patient["systolic"] is not None else "belum diukur"),
+        "ppg": (f"{_num(ppg['bp_est_sbp'])}/{_num(ppg['bp_est_dbp'])} ({_when(ppg['captured_at'])})"
+                if ppg else "belum ada"),
         "status": (f"Kesadaran {ACVPU_SHORT.get(patient['acvpu'], '-')}, O2 {'ya' if patient['on_oxygen'] else 'tidak'}, "
                    f"nyeri {patient['pain'] if patient['pain'] is not None else '-'}/10"),
-        "status_short": (f"ACVPU {ACVPU_SHORT.get(patient['acvpu'], '-')} O2 {'ya' if patient['on_oxygen'] else 'tdk'} "
-                         f"nyeri {patient['pain'] if patient['pain'] is not None else '-'}"),
-        "alerts": [a["alert"] for a in detail["alerts"]],
         "started": _when(patient["created_at"]),
-        "handed": _when(patient["handed_over_at"]) if patient["handed_over_at"] else None,
         "destination": patient["destination"],
-        "unit": patient["ambulance_id"],
-        "journey": detail.get("journey"),
         "mock": any((r.get("sources") or {}).get("hr") == "MOCK" for r in detail["timeline"]),
     }
 
 
-def _minutes(seconds: float) -> str:
-    if seconds < 60:
-        return "<1 mnt"
-    total = int(round(seconds / 60))
-    hours, mins = divmod(total, 60)
-    return f"{hours} j {mins} mnt" if hours else f"{mins} mnt"
+def label_qr(detail: dict[str, Any], cfg: Settings = settings) -> QrResult | None:
+    """The viewer link for this patient, or None if it cannot be built.
 
-
-def _vitals_line(vitals: dict[str, Any]) -> str:
-    def v(key: str, digits: int = 0) -> str:
-        item = vitals.get(key)
-        return _num(item["value"] if item else None, digits)
-    return f"N{v('hr')} SpO2 {v('spo2')} RR{v('rr')} S{v('temp', 1)}"
-
-
-def _condition_lines(label: str, side: dict[str, Any]) -> list[str]:
-    tri = side.get("triage") or {}
-    news = tri.get("news2_total")
-    news_txt = "-" if news is None else f"{news} ({tri.get('news2_measured', 0)}/7)"
-    cuff = side.get("cuff")
-    cuff_txt = f"{_num(cuff['systolic'])}/{_num(cuff['diastolic'])}" if cuff and cuff.get("systolic") is not None else "-"
-    pain = side.get("pain")
-    return [
-        f"{label} {_when(tri.get('at'))} {tri.get('colour') or '-'} NEWS2 {news_txt}",
-        _vitals_line(side.get("vitals") or {}),
-        (f"TD {cuff_txt} ACVPU {ACVPU_SHORT.get(side.get('acvpu'), '-')} "
-         f"O2 {'ya' if side.get('on_oxygen') else 'tdk'} nyeri {pain if pain is not None else '-'}"),
-    ]
-
-
-def qr_text(facts: dict[str, Any]) -> str:
-    """What a phone shows after scanning: the trip, not a copy of the label.
-
-    The label already prints the latest category and vitals. The QR adds what
-    does not fit on paper: how long the trip took, how often and how long the
-    patient was in each triage colour, and the condition at pickup next to the
-    condition at the end. Kept under QR_TEXT_LIMIT so the code stays at
-    version 17 or below, 4 dots (0.5 mm) per module on 58 mm paper.
+    A label without a QR still carries every number on paper, so a QR problem
+    must never stop the print.
     """
-    # Most important first: if anything is cut, it is the tail.
-    lines = [
-        f"SIREN {facts['code']}" + (" SIMULASI" if facts["mock"] else ""),
-        f"{_clip(facts['name'], 30)}, {facts['who']}",
-    ]
-    journey = facts.get("journey")
-    if journey:
-        # Labels are usually printed before "Selesai serah terima", so an
-        # unfinished trip is measured up to the moment of printing.
-        until = _when(journey["end"]) + ("" if journey["ended"] else " (saat cetak)")
-        lines += [
-            f"PERJALANAN {_when(journey['start'])}-{until}, {_minutes(journey['duration_s'])}",
-            "Triase selama perjalanan:",
-        ]
-        for colour in ("MERAH", "KUNING", "HIJAU"):
-            c = journey["colours"][colour]
-            lines.append(f"{colour} {c['episodes']}x, {_minutes(c['seconds'])}" if c["episodes"] else f"{colour} 0x")
-        lines.append(f"Terberat {facts['worst']}; START {_clip(facts['start'], 34)}")
-        lines += _condition_lines("JEMPUT", journey["pickup"])
-        lines += _condition_lines("AKHIR", journey["final"])
-    else:
-        lines += [
-            f"{facts['colour']} NEWS2 {facts['news']}",
-            f"{facts['vitals_at']} {facts['vitals_short']}",
-            f"TD {facts['cuff']}; {facts['status_short']}",
-        ]
-    # The complaint is not printed on the label, so it outranks the alerts
-    # (also on screen and in the PDF) and the unit/destination (on the label).
-    lines.append(f"Keluhan: {_clip(facts['complaint'], 44)}")
-    if facts["alerts"]:
-        lines.append("! " + "; ".join(_clip(a, 30) for a in facts["alerts"][:2]))
-    lines.append(f"{facts['unit']}; RS {_clip(facts['destination'], 26)}")
-    # Whole lines only: a line cut in half ("Keluhan: ..") reads as an error.
-    kept: list[str] = []
-    for line in lines:
-        line = line.encode("ascii", "replace").decode("ascii")
-        if len("\n".join([*kept, line])) > QR_TEXT_LIMIT:
-            break
-        kept.append(line)
-    return "\n".join(kept)
+    base_url = getattr(cfg, "QR_BASE_URL", settings.QR_BASE_URL)
+    max_version = getattr(cfg, "QR_MAX_VERSION", settings.QR_MAX_VERSION)
+    with_name = getattr(cfg, "QR_INCLUDE_NAME", settings.QR_INCLUDE_NAME)
+    record = transport_record(detail)
+    # If the name pushes it over the size limit, a QR without the name beats none
+    for include_name in ((True, False) if with_name else (False,)):
+        try:
+            return make_qr(record, base_url, max_version=max_version, include_name=include_name)
+        except (PayloadError, ValueError) as exc:
+            log.warning("QR label tidak dapat dibuat (nama di QR: %s): %s", include_name, exc)
+    return None
+
+
+def qr_info(result: QrResult | None) -> dict[str, Any] | None:
+    if result is None:
+        return None
+    return {
+        "url": result.url, "version": result.version, "step_s": result.step_s, "points": result.points,
+        # 384 dots over 48 mm: versions up to 12 print at 5 dots per module, larger ones at 4
+        "module_mm": round(max(1, settings.PRINTER_WIDTH_PX // (result.qr.modules_count + 8)) * 48 / 384, 2),
+    }
 
 
 def sample_detail(ambulance_id: str) -> dict[str, Any]:
@@ -195,6 +141,7 @@ def sample_detail(ambulance_id: str) -> dict[str, Any]:
             "destination": None, "ambulance_id": ambulance_id,
         },
         "latest_triage": {"colour": "UJI", "news2_total": None, "news2_measured": 0, "source": "uji"},
+        "cuffs": [],
         "first_triage": None,
         "worst_colour": None,
         "timeline": [],
@@ -203,19 +150,28 @@ def sample_detail(ambulance_id: str) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------- render --
-def render_label(detail: dict[str, Any], width: int) -> Image.Image:
+def render_label(detail: dict[str, Any], width: int, qr: QrResult | None = None,
+                 cfg: Settings = settings) -> Image.Image:
+    """No longer than the earlier text-QR label, although it carries one more
+    line (PPG blood pressure): the small text is 16 dots (2 mm, the size of
+    a receipt printer's font B) with tighter spacing, and the QR hint fits on
+    one line."""
     facts = label_facts(detail)
+    if qr is None:
+        qr = label_qr(detail, cfg)
     margin = 8
     inner = width - 2 * margin
-    regular, small, bold = _font(20), _font(17), _font(22, bold=True)
+    regular, small, bold = _font(20), _font(16), _font(22, bold=True)
     big = _font(46, bold=True)
 
     canvas = Image.new("L", (width, 2000), 255)
     draw = ImageDraw.Draw(canvas)
     y = 4
 
-    def text(line: str, font, gap: int = 4):
+    def text(line: str, font, gap: int | None = None):
         nonlocal y
+        if gap is None:
+            gap = 3 if font is small else 4
         for chunk in _wrap(draw, line, font, inner):
             draw.text((margin, y), chunk, font=font, fill=0)
             y += font.size + gap
@@ -236,23 +192,23 @@ def render_label(detail: dict[str, Any], width: int) -> Image.Image:
     text(facts["who"], regular)
     text(f"Vital {facts['vitals_at']}: {facts['vitals']}", small)
     text(f"TD manset {facts['cuff']}", small)
+    text(f"TD estimasi PPG {facts['ppg']}", small)
     text(facts["status"], small)
     text(f"Mulai {facts['started']}  Cetak {datetime.now().astimezone():%H:%M}", small)
     if facts["destination"]:
         text(f"Tujuan: {_clip(facts['destination'], 60)}", small)
 
     y += 6
-    # ISO/IEC 18004 asks for a 4-module quiet zone; phone readers struggle with less
-    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=4, box_size=1)
-    qr.add_data(qr_text(facts))
-    qr.make(fit=True)
-    matrix = qr.make_image(fill_color="black", back_color="white").convert("L")
-    scale = max(1, width // matrix.width)   # quiet zone may use the side margins
-    matrix = matrix.resize((matrix.width * scale, matrix.height * scale), Image.NEAREST)
-    canvas.paste(matrix, ((width - matrix.width) // 2, y))
-    y += matrix.height + 4
-
-    text("Pindai QR: lama perjalanan, rekap triase, kondisi jemput vs akhir.", small, gap=2)
+    if qr is not None:
+        # The encoder builds the QR with the 4-module quiet zone ISO/IEC 18004 asks for
+        matrix = qr.qr.make_image(fill_color="black", back_color="white").convert("L")
+        scale = max(1, width // matrix.width)   # quiet zone may use the side margins
+        matrix = matrix.resize((matrix.width * scale, matrix.height * scale), Image.NEAREST)
+        canvas.paste(matrix, ((width - matrix.width) // 2, y))
+        y += matrix.height + 4
+        text("Pindai QR: grafik tren (perlu internet).", small, gap=2)
+    else:
+        text("QR tidak dapat dibuat. Semua angka penting ada di label ini.", small, gap=2)
     text("Alat bantu, bukan pengganti penilaian klinis.", small, gap=2)
     return canvas.crop((0, 0, width, y + 6))
 
@@ -313,14 +269,14 @@ class LabelPrinter:
 
     def render_png(self, detail: dict[str, Any]) -> bytes:
         buffer = io.BytesIO()
-        render_label(detail, self.cfg.PRINTER_WIDTH_PX).save(buffer, format="PNG")
+        render_label(detail, self.cfg.PRINTER_WIDTH_PX, cfg=self.cfg).save(buffer, format="PNG")
         return buffer.getvalue()
 
     def print_label(self, detail: dict[str, Any]) -> str:
         """Print, or raise PrinterError with a message fit for the screen."""
         if self.backend == "none":
             raise PrinterError("Printer belum diatur. Isi PRINTER_BACKEND dan PRINTER_DEVICE di .env.")
-        image = render_label(detail, self.cfg.PRINTER_WIDTH_PX)
+        image = render_label(detail, self.cfg.PRINTER_WIDTH_PX, cfg=self.cfg)
         with self._lock:
             if self.backend == "file":
                 folder = Path(self.cfg.PRINTER_DEVICE or "prints")

@@ -72,6 +72,16 @@ class Settings:
     # 384 dots = 48 mm print width of a 58 mm printer at 203 dpi
     PRINTER_WIDTH_PX: int = int(os.getenv("PRINTER_WIDTH_PX", "384"))
 
+    # Label QR: a link to the SIREN QR viewer with the whole trip packed after
+    # the '#' (app/siren_qr). The phone decodes it; the data never reaches a server.
+    QR_BASE_URL: str = os.getenv("SIREN_QR_BASE_URL", "https://thaniyuck.github.io/siren/").strip()
+    # 15 prints 0.50 mm modules and keeps one trend point per minute. If paper
+    # labels scan poorly, 12 gives 0.63 mm modules and a coarser trend.
+    QR_MAX_VERSION: int = int(os.getenv("SIREN_QR_MAX_VERSION", "15"))
+    # Team decision 22 Nov: the name goes in the QR to help the hospital match
+    # the patient. false keeps it on paper only.
+    QR_INCLUDE_NAME: bool = _bool("SIREN_QR_INCLUDE_NAME", "true")
+
     # Tests switch this off and drive the monitor and sensors by hand.
     RUN_BACKGROUND: bool = _bool("SIREN_BACKGROUND", "true")
 

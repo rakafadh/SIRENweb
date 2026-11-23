@@ -98,9 +98,13 @@
 <aside class="drawer" id="drawerLabel" aria-hidden="true" aria-labelledby="labelTitle" role="dialog">
   <div class="drawer-head"><h2 id="labelTitle">Pratinjau label</h2><button type="button" class="btn btn-ghost btn-sm" data-close-drawer>Tutup <kbd>Esc</kbd></button></div>
   <div class="drawer-body stack">
-    <p class="muted">Ukuran sebenarnya 58 mm. QR berisi ringkasan teks dan bisa dibaca kamera HP tanpa internet.</p>
+    <p class="muted">Ukuran sebenarnya 58 mm. Angka penting tercetak di kertas. QR membuka grafik tren perjalanan di HP; HP perlu internet sekali untuk membuka penampilnya, data pasien tetap di HP.</p>
     <div class="label-preview"><img id="labelImg" alt="Pratinjau label serah terima" /></div>
     <p class="form-alert" id="labelError"></p>
+    <div class="qr-info" id="qrInfo" hidden>
+      <p class="qr-meta num" id="qrMeta"></p>
+      <a class="btn btn-sm" id="qrOpen" href="#" target="_blank" rel="noopener noreferrer">Buka grafik QR</a>
+    </div>
   </div>
   <div class="drawer-foot">
     <button type="button" class="btn btn-ghost" data-close-drawer>Tutup</button>
@@ -572,8 +576,20 @@
     const img = document.getElementById('labelImg');
     img.addEventListener('error', () => setText('labelError', 'Pratinjau label gagal dibuat. Coba lagi, atau periksa log server.'));
     img.addEventListener('load', () => setText('labelError', ''));
+    async function showQrInfo() {
+      const box = document.getElementById('qrInfo');
+      const result = await api(`/api/patients/${patientId}/qr`);
+      if (!result.ok) { box.hidden = true; return; }
+      const q = result.data;
+      const minutes = q.step_s / 60;
+      const step = q.step_s % 60 ? `${q.step_s} detik` : minutes === 1 ? 'menit' : `${minutes} menit`;
+      setText('qrMeta', `QR versi ${q.version} · modul ${num(q.module_mm, 2).replace('.', ',')} mm · ${q.points} titik tren, 1 titik per ${step}`);
+      document.getElementById('qrOpen').href = q.url;
+      box.hidden = false;
+    }
     document.getElementById('previewBtn').addEventListener('click', () => {
       img.src = `/api/patients/${patientId}/label.png?t=${Date.now()}`;
+      showQrInfo();
       S.openDrawer('drawerLabel');
     });
 

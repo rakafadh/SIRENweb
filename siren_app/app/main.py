@@ -22,7 +22,7 @@ from app.models import Patient, PatientEvent, SensorEvent, TriageResult, VitalRe
 from app.schemas import ManualVitals, NoteCreate, PatientCreate, PatientUpdate, SensorModeChange, Unmeasured
 from app.services.bp_service import BloodPressureEstimator
 from app.services.handover_pdf import build_handover_pdf
-from app.services.label_printer import LabelPrinter, PrinterError, sample_detail
+from app.services.label_printer import LabelPrinter, PrinterError, label_qr, qr_info, sample_detail
 from app.services.monitor import HANDOVER_REQUIRED, Monitor
 from app.services.patients import (
     active_patient,
@@ -416,6 +416,16 @@ def label_preview(patient_id: str, db: Session = Depends(get_db)):
     patient = _get_patient(db, patient_id)
     return Response(label_printer.render_png(patient_detail(db, patient)), media_type="image/png",
                     headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/patients/{patient_id}/qr")
+def label_qr_info(patient_id: str, db: Session = Depends(get_db)):
+    """The viewer link the label QR carries, for the preview drawer."""
+    patient = _get_patient(db, patient_id)
+    info = qr_info(label_qr(patient_detail(db, patient), label_printer.cfg))
+    if info is None:
+        raise HTTPException(status_code=503, detail="QR tidak dapat dibuat untuk data ini. Label tetap bisa dicetak tanpa QR.")
+    return info
 
 
 # ------------------------------------------------------------------- export --

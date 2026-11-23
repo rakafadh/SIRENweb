@@ -216,6 +216,14 @@ sudo systemctl restart siren
 
 Uji dari menu **Perangkat → Cetak uji**.
 
+**QR di label.** QR berisi tautan ke penampil SIREN QR (`https://thaniyuck.github.io/siren/`) dengan seluruh data perjalanan setelah tanda `#`. HP mengurai data itu sendiri, jadi data pasien tidak pernah terkirim ke server. Orange Pi tidak butuh internet sama sekali. HP pemindai butuh internet sekali untuk membuka penampilnya; setelah itu label berikutnya bisa dibuka tanpa sinyal. Angka penting (kategori, NEWS2, vital, TD manset, TD estimasi PPG, RS tujuan) tetap tercetak di kertas. Pengaturan di `.env`:
+
+```env
+SIREN_QR_BASE_URL=https://thaniyuck.github.io/siren/
+SIREN_QR_MAX_VERSION=15      # 12 = modul QR lebih besar bila label sulit dipindai
+SIREN_QR_INCLUDE_NAME=true   # false = nama hanya di kertas
+```
+
 > **Belum didukung:** printer saku "cat printer" (Phomemo, PeriPage, GB01/MX05, dan sejenisnya) yang hanya bisa dipakai lewat aplikasi HP *iPrint* atau *Tiny Print*. Printer seperti ini tidak membuat `/dev/usb/lp*` maupun `/dev/rfcomm0` yang bisa dicetak. Catat merek dan modelnya bila printer Anda termasuk jenis ini.
 >
 > **Daya:** printer menarik arus besar saat mencetak. Jalur dayanya harus terpisah dari Orange Pi (buck converter + kapasitor), supaya Orange Pi tidak restart.
@@ -254,6 +262,8 @@ Uji dari menu **Perangkat → Cetak uji**.
 | Cetak berhasil tapi kertas kosong atau huruf acak | Printer tidak memahami ESC/POS raster, atau baud salah | Coba `PRINTER_BAUD=115200`; bila tetap gagal, catat model printer |
 | Label terpotong di kanan | Lebar cetak printer kurang dari 384 titik | `PRINTER_WIDTH_PX=360` |
 | Orange Pi restart saat mencetak | Tegangan turun karena printer | Pisahkan jalur daya printer |
+| QR label sulit dipindai HP | Modul QR terlalu kecil untuk kertas atau printer ini | `SIREN_QR_MAX_VERSION=12` lalu restart; titik tren jadi lebih jarang, modul lebih besar |
+| HP menampilkan "Data di QR tidak lengkap atau rusak" | Label kusut atau terpindai sebagian | Pindai ulang lebih dekat dan tegak lurus; angka penting tetap ada di kertas |
 
 ---
 
@@ -311,28 +321,29 @@ Lakukan di Orange Pi yang sudah terpasang di ambulans, dengan kedua ESP32 dan pr
 | No | Uji | Hasil yang diharapkan | ✓ |
 |---|---|---|---|
 | 24 | **Ekspor PDF** | PDF tersimpan; berisi kategori, vital, TD manset, peringatan, linimasa, dan alasan "tidak dapat diukur" | ☐ |
-| 25 | **Cetak label** | Tercetak dalam < 3 detik; kategori, nama, vital, dan jam terbaca | ☐ |
-| 26 | Pindai QR label dengan **3 HP berbeda**, jarak 10–30 cm | Ringkasan teks terbaca di ketiga HP tanpa internet | ☐ |
+| 25 | **Cetak label** | Tercetak dalam < 3 detik; kategori, nama, vital, TD manset, TD estimasi PPG, dan RS tujuan terbaca | ☐ |
+| 26 | Pindai QR label dengan **3 HP berbeda** (Android lama, iPhone), jarak 10–30 cm, HP terhubung internet | Penampil SIREN QR terbuka; kategori, NEWS2, vital terakhir, dan TD manset sama dengan kertas; grafik tren tampil | ☐ |
+| 27 | Pindai sekali dengan internet, nyalakan mode pesawat, pindai label lain | Penampil tetap terbuka tanpa sinyal | ☐ |
 
 ### C6. Ketahanan
 
 | No | Uji | Hasil yang diharapkan | ✓ |
 |---|---|---|---|
-| 27 | Cabut daya Orange Pi saat memantau pasien, lalu nyalakan | Pasien aktif muncul kembali dengan data sebelumnya; alasan "tidak dapat diukur" tetap ada | ☐ |
-| 28 | `sudo systemctl stop siren` saat layar terbuka | Banner merah "Koneksi ke server SIREN terputus" | ☐ |
-| 29 | `sudo systemctl start siren` | Banner hilang, muncul "Koneksi ke server SIREN pulih" | ☐ |
-| 30 | Ambulans berjalan di jalan bergelombang | Nadi dan laju napas diberi tanda "getaran tinggi" bila guncangan kuat | ☐ |
+| 28 | Cabut daya Orange Pi saat memantau pasien, lalu nyalakan | Pasien aktif muncul kembali dengan data sebelumnya; alasan "tidak dapat diukur" tetap ada | ☐ |
+| 29 | `sudo systemctl stop siren` saat layar terbuka | Banner merah "Koneksi ke server SIREN terputus" | ☐ |
+| 30 | `sudo systemctl start siren` | Banner hilang, muncul "Koneksi ke server SIREN pulih" | ☐ |
+| 31 | Ambulans berjalan di jalan bergelombang | Nadi dan laju napas diberi tanda "getaran tinggi" bila guncangan kuat | ☐ |
 
 ### C7. Notifikasi pasien memburuk
 
 | No | Uji | Hasil yang diharapkan | ✓ |
 |---|---|---|---|
-| 31 | Mode **Simulasi** skenario *Pasien memburuk*, mulai pasien baru, tunggu | Saat NEWS2 naik ≥3: banner **kuning** "NEWS2 naik … poin" dengan **bunyi sekali**; tetap tampil sampai **Saya mengerti** ditekan | ☐ |
-| 32 | Lanjutkan sampai kategori menjadi **MERAH** | Banner **merah** "Pasien memburuk: kategori MERAH" dengan **alarm berulang**; berhenti setelah **Saya mengerti** atau tombol `K` | ☐ |
-| 33 | Buka halaman lain (Perangkat, Riwayat) saat ada notifikasi | Banner tetap muncul di halaman mana pun | ☐ |
-| 34 | Centang *oksigen tambahan* pada pasien stabil | Tidak ada notifikasi (memberi oksigen bukan perburukan) | ☐ |
-| 35 | Bunyi di kabin ambulans dengan volume normal | Alarm terdengar jelas dari bangku petugas | ☐ |
-| 36 | Buka serah terima → *Catatan & tindakan* | Setiap notifikasi tercatat beserta jam konfirmasinya; juga ada di PDF | ☐ |
+| 32 | Mode **Simulasi** skenario *Pasien memburuk*, mulai pasien baru, tunggu | Saat NEWS2 naik ≥3: banner **kuning** "NEWS2 naik … poin" dengan **bunyi sekali**; tetap tampil sampai **Saya mengerti** ditekan | ☐ |
+| 33 | Lanjutkan sampai kategori menjadi **MERAH** | Banner **merah** "Pasien memburuk: kategori MERAH" dengan **alarm berulang**; berhenti setelah **Saya mengerti** atau tombol `K` | ☐ |
+| 34 | Buka halaman lain (Perangkat, Riwayat) saat ada notifikasi | Banner tetap muncul di halaman mana pun | ☐ |
+| 35 | Centang *oksigen tambahan* pada pasien stabil | Tidak ada notifikasi (memberi oksigen bukan perburukan) | ☐ |
+| 36 | Bunyi di kabin ambulans dengan volume normal | Alarm terdengar jelas dari bangku petugas | ☐ |
+| 37 | Buka serah terima → *Catatan & tindakan* | Setiap notifikasi tercatat beserta jam konfirmasinya; juga ada di PDF | ☐ |
 
 **Hasil UAT:** ☐ Lulus semua  ☐ Lulus dengan catatan  ☐ Belum lulus
 

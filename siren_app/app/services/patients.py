@@ -223,6 +223,8 @@ def patient_detail(db: Session, patient: Patient) -> dict[str, Any]:
         "timeline": timeline,
         "events": [serialize_event(e) for e in patient.events],
         "alerts": list(alerts_seen.values()),
+        "cuffs": [{"at": e.created_at.isoformat(), "systolic": e.data.get("systolic"), "diastolic": e.data.get("diastolic")}
+                  for e in patient.events if e.kind == "CUFF_BP" and e.data and e.data.get("systolic") is not None],
         "journey": journey_summary(patient, readings, triages),
     }
 

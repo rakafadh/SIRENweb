@@ -44,11 +44,13 @@ SIREN dibuka di **Beranda** dengan tiga menu (pintasan `1` `2` `3`). **Pantau Pa
 | **Beranda** | Menu Pantau Pasien (utama), Riwayat, Perangkat; status sensor dan printer di bar atas |
 | **Data pasien** | Kesadaran, kriteria START, nyeri, TD manset, identitas (opsional) |
 | **Pemantauan** | Kategori live dan alasannya, tanda vital beserta sumbernya, rincian NEWS2, input petugas, catatan tindakan |
-| **Serah terima** | Terbuka setelah 7 parameter NEWS2 lengkap (atau ditandai "tidak dapat diukur" dengan alasan). Ringkasan, PDF, label, lalu data dikunci. |
+| **Serah terima** | Terbuka setelah 7 parameter NEWS2 lengkap (atau ditandai "tidak dapat diukur" dengan alasan). Ringkasan bergrafik, PDF, label, lalu data dikunci. |
 | **Riwayat** | Pasien sebelumnya, ekspor CSV |
 | **Perangkat** | Status ESP32 dan printer, pilihan **Sensor sungguhan / Simulasi** |
 
 Tekan `?` di layar mana pun untuk daftar pintasan keyboard.
+
+**Label serah terima.** Kertas 58 mm memuat angka penting yang bisa dibaca tanpa sinyal: kategori, NEWS2, identitas (atau "Tanpa identitas"), vital terakhir, TD manset, TD estimasi PPG, kesadaran/O₂/nyeri, jam, dan RS tujuan. QR-nya berisi tautan ke penampil [SIREN QR](https://github.com/thaniyuck/siren) dengan seluruh data perjalanan setelah tanda `#`: di HP tampil grafik tren NEWS2, nadi, SpO₂, napas, suhu, dan TD, serta kondisi saat ini vs terburuk. Data diurai di HP dan tidak pernah terkirim ke server; HP perlu internet sekali untuk membuka penampilnya.
 
 ## Aturan data
 
@@ -69,6 +71,7 @@ Tekan `?` di layar mana pun untuk daftar pintasan keyboard.
 | Database | `siren_app/siren.db` (SQLite, WAL) |
 | Kode utama | `app/main.py` (route), `app/services/monitor.py` (loop triase 1 detik), `app/services/sensor_service.py` (pembacaan ESP32 dan simulasi) |
 | Firmware | `siren-sensors/` dengan PlatformIO: `pio run -e ppg` / `-e temp` |
+| QR label | `app/siren_qr/` disalin tanpa perubahan dari [thaniyuck/siren](https://github.com/thaniyuck/siren) (lihat `SOURCE.md`); `app/services/transport_record.py` menyusun datanya dari database |
 | Model BP | Dipakai dari `siren_app/models/`. Melatih ulang: `BloodPressure-Model/train_bp_model.py` lalu `evaluate_bp_model.py` (butuh folder `dataset/`); keduanya langsung menimpa file di `siren_app/models/`. |
 
 Konteks lengkap proyek, termasuk keputusan desain, hasil model, dan keterbatasan, ada di `../SIREN_CONTEXT.md`.
