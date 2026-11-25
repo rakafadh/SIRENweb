@@ -20,7 +20,8 @@ Satu dokumen untuk membawa SIREN dari laptop ke ambulans: menjalankan aplikasi, 
 |---|---|---|
 | `siren_app/` | Aplikasi SIREN: server, tampilan, database, dan model estimasi tekanan darah (`models/`) | Laptop dan Orange Pi |
 | `siren-sensors/` | Firmware kedua ESP32 | Laptop saja, untuk flash |
-| `BloodPressure-Model/` | Skrip untuk melatih ulang model; hasilnya otomatis ditulis ke `siren_app/models/` | Laptop saja, bila melatih ulang |
+| `siren-bp-model-test/` | Sumber model tekanan darah: pelatihan, evaluasi, dan uji live | Laptop saja, bila melatih ulang |
+| `BloodPressure-Model/` | Model tekanan darah versi lama, tidak dipakai aplikasi lagi | Tidak dipakai |
 
 ---
 
@@ -95,7 +96,7 @@ Firmware cukup ditanam **sekali** dari laptop. Setelah itu ESP32 menjalankannya 
 | Nadi, SpO₂ | Beberapa detik |
 | Suhu | ±3 detik |
 | Laju napas | ±20 detik (perkiraan awal setelah 16 detik, penuh setelah 32 detik) |
-| Estimasi TD (PPG) | ±30 detik gelombang |
+| Estimasi TD (PPG) | Setelah ±30 detik gelombang **dan** satu kali TD manset diisi (kalibrasi). Pasien dan sensor sebaiknya diam saat manset diisi. |
 
 ### A5. Kalau ada masalah di laptop
 
@@ -109,7 +110,8 @@ Firmware cukup ditanam **sekali** dari laptop. Setelah itu ESP32 menjalankannya 
 | Board tidak muncul di Device Manager | Kabel hanya untuk daya, atau driver belum terpasang | Ganti kabel data; pasang driver CP210x atau CH340 |
 | Port *Gagal dibuka* di menu Perangkat | Port dipakai program lain (misalnya `pio device monitor`) | Tutup program itu, lalu **Pindai ulang port** |
 | Port terbuka tapi *Belum dikenali* | Firmware lama atau baud salah | Flash ulang (A3); baud harus 115200 |
-| Estimasi TD: "Menunggu gelombang PPG…" | Firmware PPG belum mengirim baris `W,` | Flash ulang board PPG |
+| Estimasi TD: "Menunggu gelombang dari sensor jari" | Firmware PPG belum mengirim baris `W,` | Flash ulang board PPG (A3) |
+| Estimasi TD tidak muncul setelah manset diisi | Kalibrasi gagal; alasannya tampil di layar (misalnya kendaraan bergerak) | Ukur manset lagi saat lebih tenang. Sementara itu triase memakai angka manset |
 | Suhu kosong padahal board suhu terhubung | Sensor tidak mengarah ke pasien; nilai di bawah 30 °C diabaikan | Arahkan ke dahi dari jarak dekat |
 
 ---
@@ -139,7 +141,7 @@ Orange Pi hanya butuh **satu folder: `siren_app/`**. Model estimasi tekanan dara
 └── siren_app/      seluruh isi, KECUALI data laptop di bawah ini
 ```
 
-**Jangan ikut disalin:** `siren.db*` (data pasien laptop), `runtime.json` (bisa membuat Orange Pi start dalam mode simulasi), `prints/`, `siren_legacy_backup_*.db`, `__pycache__/`, `.pytest_cache/`. Folder `siren-sensors/`, `BloodPressure-Model/`, dan `dataset/` juga tidak perlu.
+**Jangan ikut disalin:** `siren.db*` (data pasien laptop), `runtime.json` (bisa membuat Orange Pi start dalam mode simulasi), `prints/`, `siren_legacy_backup_*.db`, `__pycache__/`, `.pytest_cache/`. Folder `siren-sensors/`, `siren-bp-model-test/`, `BloodPressure-Model/`, dan `dataset/` juga tidak perlu.
 
 Cara cepat menyalin ke flashdisk (misalnya drive `F:`) dari folder `Despro` di laptop:
 
@@ -147,7 +149,7 @@ Cara cepat menyalin ke flashdisk (misalnya drive `F:`) dari folder `Despro` di l
 robocopy "SIREN\siren_app" "F:\SIREN\siren_app" /E /XD __pycache__ .pytest_cache prints .venv /XF siren.db siren.db-shm siren.db-wal runtime.json siren_legacy_backup_*.db
 ```
 
-Pastikan `F:\SIREN\siren_app\models\` berisi `bp_model.joblib` dan `bp_model_metrics.json`. Tanpa keduanya SIREN tetap jalan, tetapi kotak *Estimasi TD (PPG)* akan tertulis "Model BP tidak ditemukan".
+Pastikan `F:\SIREN\siren_app\models\` berisi `bp_calibrated_vitaldb.joblib` dan `alert_settings_vitaldb.json`. Tanpa keduanya SIREN tetap jalan, tetapi kotak *TD estimasi PPG* akan tertulis "Model TD tidak ditemukan di perangkat" dan triase hanya memakai TD manset.
 
 Lalu di Orange Pi, salin folder `SIREN` dari flashdisk ke `/home/orangepi/`.
 
@@ -239,10 +241,11 @@ SIREN_QR_INCLUDE_NAME=true   # false = nama hanya di kertas
 | Mode simulasi untuk demo | Menu **Perangkat** → **Simulasi** (hanya saat tidak ada pasien aktif). Kembalikan ke **Sensor sungguhan** sebelum dipakai di ambulans. |
 | Daftar pintasan keyboard | Tekan `?` di layar mana pun |
 | Notifikasi pasien memburuk | Banner kuning (NEWS2 naik ≥3, bunyi sekali) atau merah (menjadi MERAH, alarm berulang). Tekan **Saya mengerti** atau `K`. Bila tertulis "bunyi belum aktif", sentuh layar sekali. |
+| Pengingat ukur TD manset | Banner biru saat waktunya kalibrasi (tiap 10 menit, tiap 5 menit bila NEWS2 ≥ 5, atau lebih cepat bila TD berubah tajam). Tekan **Mulai ukur manset**, isi TD, lalu **Simpan**. **Nanti** menunda; pengingat muncul lagi bila terlambat. |
 | PDF serah terima | Tersimpan di `~/Downloads`; salin ke flashdisk bila perlu |
 | Data mentah | Menu **Riwayat** → ekspor CSV |
 | Cadangan data | Saat server mati, salin `siren.db` dan `siren.db-wal` |
-| Memperbarui SIREN | Salin ulang `siren_app/` (tanpa menimpa `siren.db`, `.env`, `runtime.json`), lalu jalankan `bash SIREN/siren_app/deploy/install.sh` |
+| Memperbarui SIREN | Lihat B7 |
 
 ### B6. Kalau ada masalah di Orange Pi
 
@@ -264,6 +267,26 @@ SIREN_QR_INCLUDE_NAME=true   # false = nama hanya di kertas
 | Orange Pi restart saat mencetak | Tegangan turun karena printer | Pisahkan jalur daya printer |
 | QR label sulit dipindai HP | Modul QR terlalu kecil untuk kertas atau printer ini | `SIREN_QR_MAX_VERSION=12` lalu restart; titik tren jadi lebih jarang, modul lebih besar |
 | HP menampilkan "Data di QR tidak lengkap atau rusak" | Label kusut atau terpindai sebagian | Pindai ulang lebih dekat dan tegak lurus; angka penting tetap ada di kertas |
+
+### B7. Memperbarui SIREN
+
+Lakukan saat ada versi baru di branch `main`, dan **tidak ada pasien aktif**.
+
+1. **Ambil versi baru di laptop.** Di folder `SIREN`: `git pull`, atau unduh ulang dari GitHub.
+2. **Flash ulang ESP32 bila firmware berubah.** Cek di riwayat GitHub apakah ada perubahan di `siren-sensors/src/ppg/` atau `siren-sensors/src/temp/`. Flash hanya board yang berubah (A3), satu board tercolok setiap kali upload.
+3. **Uji sebentar di laptop** (A2 dan A4): `py -3.11 -m pip install -r requirements.txt`, lalu jalankan SIREN dan pastikan semua vital muncul.
+4. **Cadangkan data Orange Pi.** Matikan server dengan `sudo systemctl stop siren`, lalu salin `siren.db` dan `siren.db-wal` ke flashdisk.
+5. **Salin `siren_app/` baru ke Orange Pi** dengan aturan yang sama seperti B2. Jangan menimpa `siren.db*`, `.env`, dan `runtime.json` yang sudah ada di Orange Pi.
+6. **Instal ulang paket dan reboot:**
+   ```bash
+   cd /home/orangepi
+   bash SIREN/siren_app/deploy/install.sh
+   sudo reboot
+   ```
+   Skrip aman dijalankan ulang dan memasang paket Python baru bila ada.
+7. **Cek setelah reboot:** `systemctl status siren` harus *active (running)*, menu **Perangkat** menunjukkan kedua node *Terhubung*, lalu coba **Cetak uji**.
+
+**Pembaruan model TD terkalibrasi (November 2026):** board PPG perlu di-flash ulang supaya mengirim penanda perubahan intensitas LED, dan paket `scipy` baru terpasang lewat langkah 6. Board suhu tidak perlu di-flash ulang.
 
 ---
 
