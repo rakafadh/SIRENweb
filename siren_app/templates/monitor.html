@@ -567,6 +567,7 @@
         }
         render(result.data.live);
         fillInputs(result.data.live.patient);
+        window.sirenAlerts?.poll();
         const reading = `TD manset ${sys}${dia !== null ? `/${dia}` : ''} mmHg`;
         const cal = result.data.bp_calibration;
         if (!cal || cal.ok) {

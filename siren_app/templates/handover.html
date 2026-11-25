@@ -386,7 +386,7 @@
       { key: 'rr', label: 'Laju napas', unit: '/mnt', digits: 0, normal: [12, 20] },
       { key: 'temp', label: 'Suhu', unit: '°C', digits: 1, normal: [36.1, 38.0] },
       // Estimate between cuffs; squares are the cuff readings it was calibrated with
-      { key: 'sbp', label: 'TD sistolik (estimasi PPG, ■ manset)', unit: 'mmHg', digits: 0, normal: [111, 219], wide: true, cuffs: true },
+      { key: 'sbp', label: 'TD sistolik (estimasi PPG, ■ manset)', unit: 'mmHg', digits: 0, normal: [111, 219], fitTop: 150, wide: true, cuffs: true },
     ];
 
     function niceTicks(lo, hi, count = 4) {
@@ -418,7 +418,7 @@
       let lo; let hi;
       if (spec.key === 'news2') { lo = 0; hi = Math.max(9, ...values, 0); }
       else {
-        lo = Math.min(...values, spec.normal[0]); hi = Math.max(...values, spec.normal[1]);
+        lo = Math.min(...values, spec.normal[0]); hi = Math.max(...values, spec.fitTop ?? spec.normal[1]);
         const pad = (hi - lo) * 0.1 || 1; lo -= pad; hi += pad;
         if (spec.floor) hi = Math.min(hi, spec.floor);
       }

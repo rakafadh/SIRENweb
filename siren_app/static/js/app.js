@@ -497,6 +497,7 @@ const SIREN = (() => {
     document.getElementById('alertAction')?.addEventListener('click', alerts.act);
     ['pointerdown', 'keydown'].forEach((type) => document.addEventListener(type, sound.unlock, { passive: true }));
     shortcut('K', 'Konfirmasi notifikasi', () => alerts.acknowledge());
+    window.sirenAlerts = alerts;   // pages refresh the banner right after an action that closes a reminder
     alerts.poll();
     setInterval(alerts.poll, 2000);
     // /monitor#drawerManual opens that panel once the page has its data
