@@ -181,12 +181,12 @@ def test_alerts_leave_the_screen_on_their_own(client, app_module, monkeypatch):
 
     _rise(client, app_module)
     assert len(client.get("/api/notifications").json()["items"]) == 1
-    later = app_module.utcnow() + timedelta(seconds=31)       # a NEWS2 rise shows for 30 s
+    later = app_module.utcnow() + timedelta(seconds=16)       # a NEWS2 rise is listed for 15 s
     monkeypatch.setattr(app_module, "utcnow", lambda: later)
     assert client.get("/api/notifications").json()["items"] == []
 
 
-def test_cuff_reminder_sits_under_alerts(client, app_module):
+def test_notifications_newest_first(client, app_module):
     from app.database import new_session
     from app.models import PatientEvent
 
@@ -198,7 +198,7 @@ def test_cuff_reminder_sits_under_alerts(client, app_module):
     db.commit()
     db.close()
     items = client.get("/api/notifications").json()["items"]
-    assert [i["kind"] for i in items] == ["NEWS2", "MANSET"]   # the newer reminder still goes under
+    assert [i["kind"] for i in items] == ["MANSET", "NEWS2"]
 
 
 def test_handover_page_stops_monitoring_and_alerts(client, app_module):

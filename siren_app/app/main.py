@@ -310,8 +310,9 @@ def manual_vitals(patient_id: str, body: ManualVitals, db: Session = Depends(get
 # ----------------------------------------------------------- notifications --
 NOTIFICATION_KINDS = ("NOTIFIKASI", "PENGINGAT")   # deterioration alerts, cuff reminders
 # Deterioration alerts are a nudge, not a task: they leave the screen on their
-# own. A cuff reminder stays until the crew starts the cuff or enters a reading.
-ALERT_SHOW_S = {"alarm": 60, "beep": 30}
+# own (the screen shows a NEWS2 rise for 5 s; listed a little longer so a 2 s
+# poll cannot miss it). A cuff reminder stays until the crew presses "Ukur".
+ALERT_SHOW_S = {"alarm": 60, "beep": 15}
 
 
 def _serialize_notification(event: PatientEvent, patient: Patient) -> dict:
@@ -349,9 +350,7 @@ def pending_notifications(db: Session = Depends(get_db)):
         limit = ALERT_SHOW_S.get(data.get("level")) if event.kind == "NOTIFIKASI" else None
         return limit is None or (now - event.created_at).total_seconds() < limit
 
-    # Newest first; a waiting cuff reminder goes under any alert, which leaves on its own
-    pending = sorted((e for e in events if showing(e)), key=lambda e: e.created_at, reverse=True)
-    pending.sort(key=lambda e: e.kind == "PENGINGAT")
+    pending = sorted((e for e in events if showing(e)), key=lambda e: e.created_at, reverse=True)   # newest first
     return {"items": [_serialize_notification(e, patient) for e in pending]}
 
 

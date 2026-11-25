@@ -408,13 +408,16 @@ const SIREN = (() => {
     };
   })();
 
-  // A small stack at the top left, newest on top; older cards sit a little
-  // lower behind it. Deterioration alerts leave on their own (the server
-  // stops listing them) or on a tap. A cuff reminder stays until "Ukur".
+  // A small list at the top left. A new card comes in on top and pushes the
+  // older ones down. A NEWS2 rise leaves after 5 s and MERAH after a minute,
+  // or on a tap. A cuff reminder stays until "Ukur".
   const alerts = (() => {
-    const SHOWN = 3;                 // cards visible in the stack
+    const SHOWN = 3;                 // cards visible at once
+    const GAP = 8;
+    const SHOW_MS = { beep: 5000, alarm: 60000 };
     const cards = new Map();         // id -> { item, node }
     const sounded = new Set();
+    const gone = new Set();          // closed on this screen; the server may still list it a moment
     let order = [];                  // ids, newest first
 
     function iconFor(item) {
@@ -446,12 +449,14 @@ const SIREN = (() => {
     }
 
     function layout() {
+      let y = 0;
       order.forEach((id, i) => {
         const { node } = cards.get(id);
         node.style.zIndex = String(10 - i);
-        node.style.transform = `translateY(${i * 10}px) scale(${1 - i * 0.05})`;
+        node.style.transform = `translateY(${y}px)`;
         node.style.opacity = i < SHOWN ? '' : '0';
-        node.classList.toggle('behind', i > 0);
+        node.style.pointerEvents = i < SHOWN ? '' : 'none';
+        y += node.offsetHeight + GAP;
       });
       const muted = order.length && sound.blocked();
       document.getElementById('alertStack')?.classList.toggle('muted', Boolean(muted));
@@ -466,9 +471,10 @@ const SIREN = (() => {
       setTimeout(() => entry.node.remove(), 240);
     }
 
-    function render(items) {
+    function render(all) {
       const stack = document.getElementById('alertStack');
       if (!stack) return;
+      const items = all.filter((i) => !gone.has(i.id));
       const ids = new Set(items.map((i) => i.id));
       [...cards.keys()].filter((id) => !ids.has(id)).forEach(remove);
       items.forEach((item) => {
@@ -480,6 +486,9 @@ const SIREN = (() => {
         if (!sounded.has(item.id)) {
           sounded.add(item.id);
           if (item.level === 'alarm') sound.alarm(); else sound.beep();
+        }
+        if (item.action !== 'cuff' && SHOW_MS[item.level]) {
+          setTimeout(() => { gone.add(item.id); remove(item.id); layout(); }, SHOW_MS[item.level]);
         }
       });
       order = items.map((i) => i.id);   // the server lists newest first
@@ -493,6 +502,7 @@ const SIREN = (() => {
     }
 
     async function dismiss(item) {
+      gone.add(item.id);
       remove(item.id);
       layout();
       if (item.level === 'alarm') sound.stop();

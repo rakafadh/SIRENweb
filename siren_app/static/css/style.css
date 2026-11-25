@@ -751,8 +751,7 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
 .shortcut-list dd { margin: 0; color: var(--text-2); }
 
 /* ------------------------------------------------- notification stack */
-/* Top left, under the app bar. Newest card on top; older ones sit a little
-   lower behind it, so the stack stays small whatever is waiting. */
+/* Top left, under the app bar. Newest card on top; older ones are pushed down. */
 .alert-stack {
   position: fixed; top: calc(var(--appbar-h) + 8px); left: 12px; z-index: calc(var(--z-banner) + 1);
   width: 348px; height: 0; pointer-events: none;
@@ -768,10 +767,8 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
 }
 .alert-card.alarm { background: var(--red); color: var(--red-ink); }
 .alert-card.remind { background: var(--accent); color: var(--accent-ink); cursor: default; }
-.alert-card.entering { opacity: 0; transform: translateY(-14px) scale(0.98) !important; }
+.alert-card.entering { opacity: 0; transform: translateY(-16px) !important; }
 .alert-card.leaving { opacity: 0 !important; transform: translateX(-24px) !important; pointer-events: none; }
-.alert-card.behind { pointer-events: none; }
-.alert-card.behind > * { visibility: hidden; }   /* only the edge of an older card shows */
 .alert-card > .icon svg { width: 22px; height: 22px; }
 .alert-card-body { flex: 1; min-width: 0; }
 .alert-card-head { display: flex; align-items: baseline; gap: 8px; }
@@ -783,7 +780,7 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
 .alert-card-btn { flex: none; height: 36px; padding: 0 14px; border: 0; border-radius: var(--r);
   background: #ffffff; color: #111111; font: inherit; font-weight: 800; cursor: pointer; }
 .alert-card-btn:hover { background: #f1f1f1; }
-.alert-card.alarm:not(.behind) { animation: alert-pulse 1.2s ease-in-out 4; }
+.alert-card.alarm { animation: alert-pulse 1.2s ease-in-out 4; }
 .alert-stack.muted::after {
   content: 'Bunyi mati · sentuh layar sekali'; position: absolute; top: 8px; left: calc(100% + 8px);
   padding: 3px 8px; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow-pop);
