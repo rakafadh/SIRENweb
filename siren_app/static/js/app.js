@@ -422,7 +422,11 @@ const SIREN = (() => {
       }
       const item = items[0];
       current = item;
-      banner.className = `alert-banner ${item.level === 'alarm' ? 'alarm' : 'beep'}`;
+      banner.className = `alert-banner ${item.level === 'alarm' ? 'alarm' : item.level === 'remind' ? 'remind' : 'beep'}`;
+      const action = document.getElementById('alertAction');
+      if (action) action.classList.toggle('hidden', item.action !== 'cuff');
+      const ack = document.getElementById('alertAck');
+      if (ack) ack.replaceChildren(item.level === 'remind' ? 'Nanti ' : 'Saya mengerti ', el('kbd', { text: 'K' }));
       setText('alertTitle', item.title);
       setText('alertMessage', item.message);
       const more = items.length > 1 ? ` · ${items.length - 1} notifikasi lain menunggu` : '';
@@ -441,7 +445,7 @@ const SIREN = (() => {
       if (result.ok) render(result.data.items);
     }
 
-    async function acknowledge() {
+    async function acknowledge(quiet = false) {
       if (!current) return;
       const item = current;
       const result = await api(`/api/notifications/${item.id}/ack`, { method: 'POST' });
@@ -450,11 +454,23 @@ const SIREN = (() => {
         return;
       }
       sound.stop();
-      toast(`Dikonfirmasi pukul ${time(result.data.ack_at, true)}.`, { type: 'success' });
+      if (!quiet && item.level !== 'remind') toast(`Dikonfirmasi pukul ${time(result.data.ack_at, true)}.`, { type: 'success' });
       poll();
     }
 
-    return { poll, acknowledge };
+    // Cuff reminder: "Mulai ukur manset". The monitor page keeps the PPG from
+    // before the cuff inflates; any other page goes to the monitor first.
+    async function act() {
+      if (!current || current.action !== 'cuff') return;
+      if (typeof window.sirenCuffStart === 'function') {
+        await acknowledge(true);
+        window.sirenCuffStart();
+      } else {
+        window.location.href = '/monitor?cuff=1';
+      }
+    }
+
+    return { poll, acknowledge, act };
   })();
 
   function startClock() {
@@ -477,9 +493,10 @@ const SIREN = (() => {
     document.querySelectorAll('[data-close-dialog]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
     refreshSystem();
     setInterval(refreshSystem, 5000);
-    document.getElementById('alertAck')?.addEventListener('click', alerts.acknowledge);
+    document.getElementById('alertAck')?.addEventListener('click', () => alerts.acknowledge());
+    document.getElementById('alertAction')?.addEventListener('click', alerts.act);
     ['pointerdown', 'keydown'].forEach((type) => document.addEventListener(type, sound.unlock, { passive: true }));
-    shortcut('K', 'Konfirmasi notifikasi pasien memburuk', alerts.acknowledge);
+    shortcut('K', 'Konfirmasi notifikasi', () => alerts.acknowledge());
     alerts.poll();
     setInterval(alerts.poll, 2000);
     // /monitor#drawerManual opens that panel once the page has its data

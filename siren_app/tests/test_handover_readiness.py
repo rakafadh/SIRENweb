@@ -17,7 +17,7 @@ def test_no_sensor_and_no_manual_blocks_handover(client, app_module):
     readiness = _readiness(client, app_module)
     assert readiness["ready"] is False
     assert readiness["missing"] == 5
-    assert [i["label"] for i in readiness["items"]] == ["Nadi", "SpO₂", "Laju napas", "Suhu", "TD sistolik manset"]
+    assert [i["label"] for i in readiness["items"]] == ["Nadi", "SpO₂", "Laju napas", "Suhu", "TD sistolik"]
 
     page = client.get(f"/patients/{patient['id']}", follow_redirects=False)
     assert page.status_code == 303
@@ -25,7 +25,7 @@ def test_no_sensor_and_no_manual_blocks_handover(client, app_module):
 
     response = client.post(f"/api/patients/{patient['id']}/handover")
     assert response.status_code == 409
-    assert response.json()["detail"].startswith("Data belum lengkap: Nadi, SpO₂, Laju napas, Suhu, TD sistolik manset.")
+    assert response.json()["detail"].startswith("Data belum lengkap: Nadi, SpO₂, Laju napas, Suhu, TD sistolik.")
     assert client.get(f"/api/patients/{patient['id']}").json()["patient"]["status"] == "ACTIVE"
 
 

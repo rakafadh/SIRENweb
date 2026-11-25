@@ -8,6 +8,7 @@ PPG node (src/ppg/main_ppg.cpp, CSV_OUTPUT 1), about once a second:
 
 PPG node (WAVEFORM_OUTPUT 1), right after each CSV row:
     W,<millis at end of block>,<fs>,<ir_1>,...,<ir_n>      raw IR counts
+    G,<millis>,<led>                                       automatic gain changed the LED current
 
 Temperature node (src/temp/main_temp.cpp, CSV_OUTPUT 1), once a second:
     T,millis,tobj,tamb,tcore,traw,accel_rms,accel_peak,gyro_rms,flags
@@ -125,6 +126,17 @@ def parse_wave(line: str) -> dict[str, Any] | None:
     return {"device_ms": end_ms, "fs": fs, "samples": samples}
 
 
+def parse_gain(line: str) -> dict[str, Any] | None:
+    """LED current step: a 30 s window that contains it cannot be used for BP."""
+    parts = line.strip().split(",")
+    if len(parts) != 3:
+        return None
+    try:
+        return {"device_ms": int(parts[1]), "led": int(parts[2])}
+    except ValueError:
+        return None
+
+
 def parse_temp(line: str) -> dict[str, Any] | None:
     if not line.startswith("T,"):
         return None
@@ -185,6 +197,9 @@ def parse_line(raw: str | bytes | None) -> ParsedLine | None:
     if text.startswith("W,"):
         data = parse_wave(text)
         return ParsedLine("WAVE", data) if data else None
+    if text.startswith("G,"):
+        data = parse_gain(text)
+        return ParsedLine("GAIN", data) if data else None
     if text.startswith("T,"):
         data = parse_temp(text)
         return ParsedLine("TEMP", data) if data else None

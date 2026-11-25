@@ -100,11 +100,13 @@ def update_patient(db: Session, patient: Patient, body: PatientUpdate, undo: boo
     cuff_changed = False
     described: list[str] = []
     for field, value in changes.items():
-        if getattr(patient, field) == value:
-            continue
         if field in CUFF_FIELDS:
+            # A cuff reading counts even when it repeats the last one: it is a
+            # new measurement, it resets the cuff schedule and calibrates the estimate
             cuff_changed = True
             setattr(patient, field, value)
+            continue
+        if getattr(patient, field) == value:
             continue
         old = getattr(patient, field)
         setattr(patient, field, value)

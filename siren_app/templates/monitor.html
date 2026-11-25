@@ -46,10 +46,10 @@
           <div class="vital-value"><strong>—</strong><span class="unit">mmHg</span></div>
           <div class="vital-note">Belum diukur</div>
         </article>
-        <article class="vital experimental" id="estTile">
-          <div class="vital-head"><span class="vital-name">Estimasi TD (PPG)</span><span class="src est">EKSPERIMEN</span></div>
+        <article class="vital is-missing" id="estTile">
+          <div class="vital-head"><span class="vital-name">TD estimasi PPG</span><span class="src est">PPG</span></div>
           <div class="vital-value"><strong>—</strong><span class="unit">mmHg</span></div>
-          <div class="vital-note">Tidak dipakai untuk triase</div>
+          <div class="vital-note">Ukur TD manset sekali untuk memulai</div>
         </article>
       </div>
 
@@ -303,29 +303,52 @@
       const minutes = cuff.at ? Math.round((Date.now() - new Date(cuff.at)) / 60000) : null;
       const old = minutes !== null && minutes >= STALE_CUFF_MIN;
       const cuffExcused = data.readiness && data.readiness.items.find((i) => i.param === 'systolic' && i.state === 'excused');
+      const est = data.bp_estimate;
+      const used = (data.sbp_triage || {}).source;   // which tile NEWS2 systolic is scored from
+      const estOn = est && est.usable;
+      // With a working estimate the cuff schedule comes from the reminders, not from the cuff's age
+      const ask = old && !estOn;
       cuffTile.querySelector('.vital-note').textContent = has
-        ? `Diukur ${time(cuff.at)}${old ? `, ${minutes} mnt lalu. Ukur ulang?` : ''}`
+        ? `Diukur ${time(cuff.at)}${ask ? `, ${minutes} mnt lalu. Ukur ulang?` : ''}`
         : cuffExcused ? `Tidak dapat diukur: ${cuffExcused.reason}` : 'Belum diukur · isi di panel kanan (B)';
       cuffTile.classList.toggle('is-missing', !has);
-      cuffTile.classList.toggle('is-flagged', old);
+      cuffTile.classList.toggle('is-flagged', ask);
       const sysScore = parts ? parts.sistolik : null;
-      cuffTile.classList.toggle('score-2', sysScore === 2);
-      cuffTile.classList.toggle('score-3', sysScore === 3);
+      const cuffSrc = cuffTile.querySelector('.src');
+      cuffSrc.textContent = used === 'MANSET' ? 'MANUAL · TRIASE' : 'MANUAL';
+      cuffSrc.classList.toggle('used', used === 'MANSET');
+      cuffTile.classList.toggle('score-2', used === 'MANSET' && sysScore === 2);
+      cuffTile.classList.toggle('score-3', used === 'MANSET' && sysScore === 3);
 
-      const est = data.bp_estimate;
       const estTile = document.getElementById('estTile');
       if (est) {
         const label = est.label || {};
-        estTile.querySelector('strong').textContent = est.status === 'OK' ? `${num(est.sbp)}/${num(est.dbp)}` : '—';
-        estTile.querySelector('.vital-note').textContent = est.status === 'OK' && label.sbp_mae !== undefined
-          ? `Galat rata-rata ±${num(label.sbp_mae)}/±${num(label.dbp_mae)} · bukan triase`
-          : est.message;
+        const shown = est.status === 'OK' || est.status === 'AWAITING_CUFF';
+        estTile.querySelector('strong').textContent = shown ? `${num(est.sbp)}/${num(est.dbp)}` : '—';
+        let note = est.message;
+        if (est.status === 'OK') {
+          const since = Math.round(est.minutes_since_cuff);
+          const next = Math.max(1, Math.ceil(est.next_cuff_min));
+          note = `Manset ${since < 1 ? 'baru saja' : `${since} mnt lalu`} · ukur lagi dalam ${next} mnt`;
+        } else if (est.status === 'AWAITING_CUFF') {
+          note = 'Ukur TD manset sekarang';
+        }
+        estTile.querySelector('.vital-note').textContent = note;
+        const src = estTile.querySelector('.src');
+        src.textContent = used === 'PPG' ? 'PPG · TRIASE' : 'PPG';
+        src.classList.toggle('used', used === 'PPG');
+        estTile.classList.toggle('is-missing', !shown);
+        estTile.classList.toggle('is-flagged', est.cuff_now);
+        estTile.classList.toggle('score-2', used === 'PPG' && sysScore === 2);
+        estTile.classList.toggle('score-3', used === 'PPG' && sysScore === 3);
         estTile.title = [
-          'Estimasi tekanan darah dari gelombang PPG. Tidak dipakai untuk triase.',
-          label.sbp_mae !== undefined ? `Pada data uji ${label.dataset} (${label.test_subjects} subjek): rata-rata meleset ±${label.sbp_mae} mmHg sistolik, ±${label.dbp_mae} mmHg diastolik; ${label.sbp_within_10_pct}% estimasi sistolik dalam ±10 mmHg.` : '',
-          'Belum divalidasi pada sensor MAX30102; akurasi nyata kemungkinan lebih buruk.',
+          'Estimasi tekanan darah dari gelombang PPG, dikalibrasi dengan TD manset.',
+          'Selama berlaku, estimasi ini dipakai untuk skor NEWS2 sistolik. SIREN meminta manset berkala dan saat estimasi berubah.',
+          label.sbp_mae !== undefined ? `Pada data uji ${label.dataset}: rata-rata meleset ±${label.sbp_mae} mmHg sistolik, ±${label.dbp_mae} mmHg diastolik.` : '',
         ].filter(Boolean).join('\n');
       }
+      const sysCell = document.querySelector('.news-cell[data-part="sistolik"]');
+      if (sysCell) sysCell.title = used === 'PPG' ? 'Dari TD estimasi PPG' : used === 'MANSET' ? 'Dari TD manset' : 'Belum ada TD';
     }
 
     function renderPatient(p) {
@@ -351,8 +374,11 @@
     function renderChecklist(r) {
       const list = document.getElementById('readyList');
       list.replaceChildren(...r.items.map((item) => {
+        const sbpUsed = live.sbp_triage || {};
         const value = item.param === 'systolic'
-          ? (live.cuff && live.cuff.systolic !== null ? `${num(live.cuff.systolic)}/${num(live.cuff.diastolic)} mmHg` : null)
+          ? (sbpUsed.source === 'PPG'
+            ? `${num(live.bp_estimate.sbp)}/${num(live.bp_estimate.dbp)} mmHg (estimasi PPG)`
+            : live.cuff && live.cuff.systolic !== null ? `${num(live.cuff.systolic)}/${num(live.cuff.diastolic)} mmHg (manset)` : null)
           : (live.vitals[item.param].value !== null ? num(live.vitals[item.param].value, DIGITS[item.param]) : null);
         const row = el('li', { class: `check-item ${item.state}` }, [
           el('span', { class: 'check-mark', 'aria-hidden': 'true', text: item.state === 'ok' ? '✓' : item.state === 'excused' ? '–' : '!' }),
@@ -541,9 +567,27 @@
         }
         render(result.data.live);
         fillInputs(result.data.live.patient);
-        toast(`TD manset ${sys}${dia !== null ? `/${dia}` : ''} mmHg tersimpan.`, { type: 'success' });
+        const reading = `TD manset ${sys}${dia !== null ? `/${dia}` : ''} mmHg`;
+        const cal = result.data.bp_calibration;
+        if (!cal || cal.ok) {
+          toast(`${reading} tersimpan.${cal ? ' Estimasi TD dikalibrasi.' : ''}`, { type: 'success' });
+        } else {
+          toast(`${reading} tersimpan dan dipakai untuk triase. Estimasi TD belum dikalibrasi: ${cal.message}.`, { type: 'info', timeout: 7000 });
+        }
       });
     });
+
+    // Cuff reminder "Mulai ukur manset": keep the PPG from before the cuff
+    // squeezes the arm, then wait for the reading.
+    window.sirenCuffStart = async () => {
+      await api(`/api/patients/${patient.id}/cuff-start`, { method: 'POST' });
+      toast('Pasang dan jalankan manset. Isi hasilnya di sini setelah selesai.', { type: 'info', timeout: 6000 });
+      cuffForm.elements.systolic.focus();
+    };
+    if (new URLSearchParams(window.location.search).get('cuff') === '1') {
+      window.history.replaceState(null, '', '/monitor');
+      (function startWhenLoaded() { if (patient) window.sirenCuffStart(); else setTimeout(startWhenLoaded, 300); })();
+    }
     cuffForm.addEventListener('input', () => { clearErrors(cuffForm); setText('cuffError', ''); });
 
     // ----------------------------------------------------------- drawers

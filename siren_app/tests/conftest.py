@@ -47,4 +47,7 @@ def client(app_module):
         app_module.sensor_manager.ppg = type(app_module.sensor_manager.ppg)()
         app_module.sensor_manager.temp = type(app_module.sensor_manager.temp)()
         app_module.sensor_manager.wave.clear()
+        app_module.sensor_manager.gain_ms.clear()
+        app_module.sensor_manager.motion.clear()
+        app_module.bp_estimator.reset()
         yield test_client

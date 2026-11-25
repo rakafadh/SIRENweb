@@ -385,6 +385,8 @@
       { key: 'spo2', label: 'SpO₂', unit: '%', digits: 0, normal: [96, 100], floor: 100 },
       { key: 'rr', label: 'Laju napas', unit: '/mnt', digits: 0, normal: [12, 20] },
       { key: 'temp', label: 'Suhu', unit: '°C', digits: 1, normal: [36.1, 38.0] },
+      // Estimate between cuffs; squares are the cuff readings it was calibrated with
+      { key: 'sbp', label: 'TD sistolik (estimasi PPG, ■ manset)', unit: 'mmHg', digits: 0, normal: [111, 219], wide: true, cuffs: true },
     ];
 
     function niceTicks(lo, hi, count = 4) {
@@ -399,13 +401,16 @@
     function seriesFor(key, d) {
       return d.timeline.map((r) => ({
         t: ms(r.captured_at),
-        v: key === 'news2' ? ((r.triage || {}).news2_total ?? null) : r[key],
+        v: key === 'news2' ? ((r.triage || {}).news2_total ?? null)
+          : key === 'sbp' ? (['OK', 'AWAITING_CUFF'].includes(r.bp_est_status) ? r.bp_est_sbp : null)
+            : r[key],
       }));
     }
 
     function drawChart(spec, d, host) {
       const pts = seriesFor(spec.key, d);
-      const values = pts.filter((p) => p.v !== null && p.v !== undefined).map((p) => p.v);
+      const cuffs = spec.cuffs ? (d.cuffs || []).map((c) => ({ t: ms(c.at), v: c.systolic })).filter((c) => c.t >= axis.t0 && c.t <= axis.t1) : [];
+      const values = pts.filter((p) => p.v !== null && p.v !== undefined).map((p) => p.v).concat(cuffs.map((c) => c.v));
       const W = host.clientWidth || axis.width;
       const H = spec.wide ? 132 : 118;
       const top = 10;
@@ -459,6 +464,7 @@
         prev = p;
       });
       root.append(svg('path', { d: path, class: 'line' }));
+      cuffs.forEach((c) => root.append(svg('rect', { x: x(c.t) - 4, y: y(c.v) - 4, width: 8, height: 8, class: 'cuff-mark' })));
       const last = [...pts].reverse().find((p) => p.v !== null && p.v !== undefined);
       if (last) {
         root.append(svg('circle', { cx: x(last.t), cy: y(last.v), r: 4, class: 'dot' }));

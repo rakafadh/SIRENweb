@@ -24,7 +24,7 @@ from app.database import new_session, utcnow
 from app.models import Patient, PatientEvent, TriageResult, VitalReading
 from app.services import triage as TR
 from app.services import triage_policy as policy
-from app.services.bp_service import WINDOW_S, BloodPressureEstimator, BpEstimate
+from app.services.bp_service import BloodPressureEstimator, BpEstimate, Calibration
 from app.services.deterioration_alerts import Alert, DeteriorationWatch
 from app.services.sensor_service import SensorManager
 
@@ -41,10 +41,11 @@ HANDOVER_REQUIRED = {
     "spo2": "SpO₂",
     "rr": "Laju napas",
     "temp": "Suhu",
-    "systolic": "TD sistolik manset",
+    "systolic": "TD sistolik",
 }
 HISTORY_KEEP_S = 180
 BP_REFRESH_S = 5.0
+REMINDER_REPEAT_S = 300.0   # a cuff request still open after this: remind once more
 
 
 def colour_code(value: int | None) -> str | None:
@@ -57,7 +58,24 @@ def age_flags(age: int | None, cfg: Settings = settings) -> tuple[bool, bool]:
     return age >= cfg.ELDERLY_AGE, age < cfg.PAEDIATRIC_AGE
 
 
-def operator_for(patient: Patient, cfg: Settings = settings) -> TR.Operator:
+def systolic_for_triage(patient: Patient, bp: BpEstimate | None) -> tuple[float | None, float | None, str | None]:
+    """(systolic, diastolic, source) that triage scores.
+
+    The calibrated PPG estimate is treated like any other measurement while it
+    is usable, scored from its cautious value. A cuff typed in after the last
+    successful calibration (one that could not calibrate) wins until the next
+    calibration, because it is newer than what the estimate is anchored to.
+    """
+    cuff_at = patient.bp_cuff_at.timestamp() if patient.bp_cuff_at else None
+    if bp is not None and bp.usable and bp.news2_sbp is not None:
+        if cuff_at is None or bp.calibrated_at is None or cuff_at <= bp.calibrated_at + 5:
+            return bp.news2_sbp, bp.dbp, "PPG"
+    if patient.systolic is not None:
+        return patient.systolic, patient.diastolic, "MANSET"
+    return None, None, None
+
+
+def operator_for(patient: Patient, cfg: Settings = settings, bp: BpEstimate | None = None) -> TR.Operator:
     elderly, paediatric = age_flags(patient.age, cfg)
     return TR.Operator(
         acvpu=patient.acvpu or "alert",
@@ -70,8 +88,8 @@ def operator_for(patient: Patient, cfg: Settings = settings) -> TR.Operator:
         elderly=elderly,
         paediatric=paediatric,
         comorbid=bool(patient.comorbid),
-        systolic=patient.systolic,
-        diastolic=patient.diastolic,
+        systolic=systolic_for_triage(patient, bp)[0],
+        diastolic=systolic_for_triage(patient, bp)[1],
     )
 
 
@@ -92,6 +110,9 @@ class Monitor:
         self._last_snapshot = 0.0
         self._last_colour: str | None = None
         self._bp_cache: tuple[float, BpEstimate] | None = None
+        self._last_news_total: int | None = None   # sets the cuff interval (5 min from NEWS2 5)
+        self._reminder_state: str | None = None    # None | "due" | "overdue" for the open cuff request
+        self._reminder_at: float | None = None     # when the open request was first announced
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -133,11 +154,11 @@ class Monitor:
             else:
                 self.unmeasured[param] = {"reason": reason, "at": utcnow().isoformat()}
 
-    def readiness(self, vitals: dict[str, Any], patient: Patient) -> dict[str, Any]:
+    def readiness(self, vitals: dict[str, Any], patient: Patient, bp: BpEstimate | None = None) -> dict[str, Any]:
         """Whether handover may start: every required value present, or excused in writing."""
         items = []
         for param, label in HANDOVER_REQUIRED.items():
-            value = patient.systolic if param == "systolic" else vitals[param]["value"]
+            value = systolic_for_triage(patient, bp)[0] if param == "systolic" else vitals[param]["value"]
             excused = self.unmeasured.get(param)
             if value is not None:
                 state = "ok"
@@ -179,7 +200,9 @@ class Monitor:
                     self._activate(db, patient)
 
                 vitals = self._vitals()
-                op = operator_for(patient, self.cfg)
+                # BP first: a usable estimate stands in for the cuff in NEWS2
+                bp = self._bp_estimate(vitals)
+                op = operator_for(patient, self.cfg, bp)
                 tr_vitals = {p: vitals[p]["value"] for p in VITAL_PARAMS}
                 tr_vitals["pi"] = vitals["_pi"]
 
@@ -193,7 +216,8 @@ class Monitor:
                 shown = self.hold.update(now, result.colour)
                 alert = self.watch.update(now, result.news.parts, shown.colour, result.news.total, result.news.measured)
 
-                bp = self._bp_estimate(vitals)
+                self._last_news_total = result.news.total
+                self._cuff_reminder(db, patient, bp)
                 colour = COLOUR_CODE[shown.colour]
                 changed = self._last_colour is not None and colour != self._last_colour
                 due = now - self._last_snapshot >= self.cfg.SNAPSHOT_INTERVAL_S
@@ -229,6 +253,9 @@ class Monitor:
         self._last_colour = None
         self._last_snapshot = 0.0
         self._bp_cache = None
+        self._last_news_total = None
+        self._reminder_state = self._reminder_at = None
+        self.bp.reset()   # the last patient's cuff calibration does not apply
 
         cutoff = utcnow() - timedelta(seconds=self.cfg.MANUAL_TTL_S)
         events = db.scalars(
@@ -323,10 +350,88 @@ class Monitor:
         now = time.time()
         if self._bp_cache and now - self._bp_cache[0] < BP_REFRESH_S:
             return self._bp_cache[1]
-        times, values, _fs = self.sensors.waveform(WINDOW_S + 2)
-        estimate = self.bp.estimate(times, values, vitals["_finger"], vitals["_motion_g"])
+        estimate = self.bp.estimate(self.sensors, vitals["_finger"], self._last_news_total)
         self._bp_cache = (now, estimate)
         return estimate
+
+    # ------------------------------------------------------------ the cuff --
+    def cuff_started(self) -> Calibration:
+        """'Mulai ukur': keep the PPG window from before the cuff inflates."""
+        with self._lock:
+            return self.bp.mark_cuff_start(self.sensors)
+
+    def cuff_entered(self, systolic: float | None, diastolic: float | None) -> Calibration | None:
+        """A cuff reading was saved. Calibrate the estimate with it, close the reminder."""
+        if systolic is None:
+            return None
+        with self._lock:
+            result = self.bp.calibrate(self.sensors, systolic, diastolic)
+            self._bp_cache = None
+            if result.ok:
+                self._reminder_state = self._reminder_at = None
+            else:
+                # The reading still scores NEWS2. Ask again later, not right away.
+                self._reminder_state, self._reminder_at = "due", time.time()
+            db = new_session()
+            try:
+                if self.patient_id:
+                    self._close_reminders(db, self.patient_id, "manset diisi")
+            finally:
+                db.close()
+        return result
+
+    def cuff_undone(self) -> None:
+        """A cuff entry was undone: drop the calibration it may have made."""
+        with self._lock:
+            self.bp.reset()
+            self._bp_cache = None
+
+    def _cuff_reminder(self, db, patient: Patient, bp: BpEstimate) -> None:
+        """One reminder per cuff request, and one more if it is running late."""
+        if not bp.cuff_now:
+            self._reminder_state = self._reminder_at = None
+            return
+        late = self._reminder_at is not None and time.time() - self._reminder_at >= REMINDER_REPEAT_S
+        overdue = "CUFF_OVERDUE" in bp.reasons or late
+        state = "overdue" if overdue else "due"
+        if self._reminder_state == state or (self._reminder_state == "overdue" and not overdue):
+            return
+        if bp.status == "NEEDS_CALIBRATION":
+            # First cuff with the finger on the sensor, or again after the finger came off
+            title = "Ukur TD manset sekarang" if overdue else "Ukur TD manset"
+            message = bp.message
+        elif overdue:
+            title = "Ukur TD manset sekarang"
+            message = "Pengukuran manset yang diminta sudah lewat 5 menit. Estimasi TD makin tidak akurat."
+        elif bp.status == "STALE":
+            title, message = "Ukur TD manset", bp.message
+        else:
+            title, message = "Waktunya ukur TD manset", bp.reminder
+        self._close_reminders(db, patient.id, "diganti pengingat baru")
+        db.add(PatientEvent(
+            patient_id=patient.id,
+            kind="PENGINGAT",
+            detail=f"{title}. {message}",
+            data={"kind": "MANSET", "level": "remind", "title": title, "message": message,
+                  "reasons": bp.reasons, "action": "cuff", "ack_at": None},
+        ))
+        db.commit()
+        self._reminder_state = state
+        self._reminder_at = self._reminder_at or time.time()
+
+    def _close_reminders(self, db, patient_id: str, why: str) -> None:
+        events = db.scalars(select(PatientEvent).where(
+            PatientEvent.patient_id == patient_id, PatientEvent.kind == "PENGINGAT")).all()
+        changed = False
+        for event in events:
+            data = dict(event.data or {})
+            if not data.get("ack_at"):
+                data["ack_at"] = utcnow().isoformat()
+                data["closed"] = why
+                event.data = data
+                changed = True
+        if changed:
+            db.commit()
 
     def _persist(self, db, patient: Patient, vitals, result: TR.Triage, shown: policy.Displayed,
                  bp: BpEstimate, previous: str | None) -> None:
@@ -338,7 +443,8 @@ class Monitor:
             temp=vitals["temp"]["value"],
             pi=vitals["_pi"],
             motion_g=vitals["_motion_g"],
-            sources={p: vitals[p]["source"] for p in VITAL_PARAMS},
+            sources={**{p: vitals[p]["source"] for p in VITAL_PARAMS},
+                     "sbp": systolic_for_triage(patient, bp)[2]},
             systolic=patient.systolic,
             diastolic=patient.diastolic,
             bp_est_sbp=bp.sbp,
@@ -405,10 +511,12 @@ class Monitor:
             "diastolic": patient.diastolic,
             "at": patient.bp_cuff_at.isoformat() if patient.bp_cuff_at else None,
         }
+        sbp_used, dbp_used, sbp_source = systolic_for_triage(patient, bp)
         payload["bp_estimate"] = {**bp.to_dict(), "label": self.bp.label()}
+        payload["sbp_triage"] = {"source": sbp_source, "systolic": sbp_used, "diastolic": dbp_used}
         # Every manual value still in force, including ones a sensor overrides now
         payload["manual"] = self.manual_values()
-        payload["readiness"] = self.readiness(vitals, patient)
+        payload["readiness"] = self.readiness(vitals, patient, bp)
         payload["triage"] = {
             "colour": COLOUR_CODE[shown.colour],
             "raw_colour": COLOUR_CODE[shown.raw],

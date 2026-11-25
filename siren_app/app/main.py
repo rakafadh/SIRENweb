@@ -257,12 +257,28 @@ def get_patient(patient_id: str, db: Session = Depends(get_db)):
 def edit_patient(patient_id: str, body: PatientUpdate, undo: bool = False, db: Session = Depends(get_db)):
     patient = _get_patient(db, patient_id)
     _require_active(patient)
+    sent = body.model_dump(exclude_unset=True)
     changes = update_patient(db, patient, body, undo=undo)
+    calibration = None
     if undo:
         # The colour hold smooths sensor noise; it must not keep showing the
         # result of a key pressed by mistake.
         monitor.reset_hold()
-    return {"changes": changes, "live": monitor.tick()}
+        if "systolic" in sent or "diastolic" in sent:
+            monitor.cuff_undone()
+    elif sent.get("systolic") is not None:
+        result = monitor.cuff_entered(patient.systolic, patient.diastolic)
+        calibration = {"ok": result.ok, "reason": result.reason, "message": result.message} if result else None
+    return {"changes": changes, "live": monitor.tick(), "bp_calibration": calibration}
+
+
+@app.post("/api/patients/{patient_id}/cuff-start")
+def cuff_start(patient_id: str, db: Session = Depends(get_db)):
+    """The crew starts the cuff now: keep the PPG from just before it inflates."""
+    patient = _get_patient(db, patient_id)
+    _require_active(patient)
+    result = monitor.cuff_started()
+    return {"ok": result.ok, "reason": result.reason, "message": result.message}
 
 
 @app.post("/api/patients/{patient_id}/manual-vitals")
@@ -283,7 +299,8 @@ def manual_vitals(patient_id: str, body: ManualVitals, db: Session = Depends(get
 
 
 # ----------------------------------------------------------- notifications --
-LEVEL_ORDER = {"alarm": 0, "beep": 1}
+LEVEL_ORDER = {"alarm": 0, "beep": 1, "remind": 2}
+NOTIFICATION_KINDS = ("NOTIFIKASI", "PENGINGAT")   # deterioration alerts, cuff reminders
 
 
 def _serialize_notification(event: PatientEvent, patient: Patient) -> dict:
@@ -296,6 +313,7 @@ def _serialize_notification(event: PatientEvent, patient: Patient) -> dict:
         "level": data.get("level"),
         "title": data.get("title"),
         "message": data.get("message"),
+        "action": data.get("action"),
         "created_at": event.created_at.isoformat(),
     }
 
@@ -308,7 +326,7 @@ def pending_notifications(db: Session = Depends(get_db)):
         return {"items": []}
     events = db.scalars(
         select(PatientEvent)
-        .where(PatientEvent.patient_id == patient.id, PatientEvent.kind == "NOTIFIKASI")
+        .where(PatientEvent.patient_id == patient.id, PatientEvent.kind.in_(NOTIFICATION_KINDS))
         .order_by(PatientEvent.created_at)
     ).all()
     pending = [e for e in events if not (e.data or {}).get("ack_at")]
@@ -320,14 +338,15 @@ def pending_notifications(db: Session = Depends(get_db)):
 @app.post("/api/notifications/{event_id}/ack")
 def acknowledge_notification(event_id: str, db: Session = Depends(get_db)):
     event = db.get(PatientEvent, event_id)
-    if event is None or event.kind != "NOTIFIKASI":
+    if event is None or event.kind not in NOTIFICATION_KINDS:
         raise HTTPException(status_code=404, detail="Notifikasi tidak ditemukan.")
     data = dict(event.data or {})
     if not data.get("ack_at"):
         now = utcnow()
         data["ack_at"] = now.isoformat()
         event.data = data   # reassign so SQLAlchemy sees the JSON change
-        event.detail = f"{event.detail} Dikonfirmasi petugas {now.astimezone():%H:%M:%S}."
+        if event.kind == "NOTIFIKASI":
+            event.detail = f"{event.detail} Dikonfirmasi petugas {now.astimezone():%H:%M:%S}."
         db.commit()
     return {"ok": True, "ack_at": data["ack_at"]}
 

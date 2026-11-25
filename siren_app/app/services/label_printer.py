@@ -76,7 +76,7 @@ def label_facts(detail: dict[str, Any]) -> dict[str, Any]:
     latest = detail["latest_triage"] or {}
     last = detail["timeline"][-1] if detail["timeline"] else {}
     ppg = next((r for r in reversed(detail["timeline"])
-                if r.get("bp_est_status") == "OK" and r.get("bp_est_sbp") is not None), None)
+                if r.get("bp_est_status") in ("OK", "AWAITING_CUFF") and r.get("bp_est_sbp") is not None), None)
     sex = {"Laki-laki": "L", "Perempuan": "P"}.get(patient["sex"], "kelamin -")
     age = f"{patient['age']} th" if patient["age"] is not None else "usia -"
     news = latest.get("news2_total")

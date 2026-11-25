@@ -25,8 +25,8 @@ def _database_url() -> str:
     return url
 
 
-# Trained by BloodPressure-Model/train_bp_model.py, which writes straight here,
-# so one folder (siren_app) is all a device needs.
+# Cuff-calibrated BP model, trained in siren-bp-model-test (scripts/vitaldb_train.py)
+# and copied here, so one folder (siren_app) is all a device needs.
 _BP_DIR = BASE_DIR / "models"
 
 
@@ -59,8 +59,13 @@ class Settings:
     ELDERLY_AGE: int = int(os.getenv("ELDERLY_AGE", "60"))
     PAEDIATRIC_AGE: int = int(os.getenv("PAEDIATRIC_AGE", "18"))
 
-    BP_MODEL_PATH: Path = Path(os.getenv("BP_MODEL_PATH") or _BP_DIR / "bp_model.joblib")
-    BP_METRICS_PATH: Path = Path(os.getenv("BP_METRICS_PATH") or _BP_DIR / "bp_model_metrics.json")
+    BP_MODEL_PATH: Path = Path(os.getenv("BP_MODEL_PATH") or _BP_DIR / "bp_calibrated_vitaldb.joblib")
+    BP_SETTINGS_PATH: Path = Path(os.getenv("BP_SETTINGS_PATH") or _BP_DIR / "alert_settings_vitaldb.json")
+    # A cuff reading typed in without "Mulai ukur" calibrates with the PPG
+    # window that ended this long before it: inflating, reading and typing
+    # take about this long, and the window must come from before the cuff
+    # squeezed the arm (siren-bp-model-test, live_bp.py --entry-lag).
+    BP_CUFF_ENTRY_LAG_S: float = float(os.getenv("BP_CUFF_ENTRY_LAG_S", "45"))
 
     # Handover label printer, see app/services/label_printer.py.
     # none | file | escpos
