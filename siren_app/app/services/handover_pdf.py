@@ -87,6 +87,10 @@ class _Doc(FPDF):
             self.ln()
 
 
+# Estimates shown while a requested cuff is pending keep counting as estimates
+ESTIMATE_OK = ("OK", "AWAITING_CUFF")
+
+
 def build_handover_pdf(detail: dict[str, Any], ambulance_id: str, bp_label: dict[str, Any], mode: str) -> bytes:
     patient = detail["patient"]
     latest = detail["latest_triage"] or {}
@@ -196,21 +200,27 @@ def build_handover_pdf(detail: dict[str, Any], ambulance_id: str, bp_label: dict
         pdf.table(["Pertama muncul", "Peringatan"],
                   [[_when(a["first_seen"], "%H:%M:%S"), a["alert"]] for a in detail["alerts"]], [28, 154])
 
-    est = [r for r in detail["timeline"] if r.get("bp_est_status") == "OK"]
-    pdf.heading("Estimasi tekanan darah dari PPG (eksperimental)")
+    est = [r for r in detail["timeline"] if r.get("bp_est_status") in ESTIMATE_OK]
+    pdf.heading("Tekanan darah estimasi PPG (dikalibrasi manset)")
     if est:
         r = est[-1]
-        pdf.pairs([("Estimasi terakhir", f"{_num(r['bp_est_sbp'])}/{_num(r['bp_est_dbp'])} mmHg pada {_when(r['captured_at'], '%H:%M:%S')}")])
+        ppg_scored = sum(1 for x in detail["timeline"] if (x.get("sources") or {}).get("sbp") == "PPG")
+        pdf.pairs([
+            ("Estimasi terakhir", f"{_num(r['bp_est_sbp'])}/{_num(r['bp_est_dbp'])} mmHg pada {_when(r['captured_at'], '%H:%M:%S')}"),
+            ("Pengukuran manset", f"{len(detail.get('cuffs') or [])} kali selama perjalanan"),
+            ("Dipakai untuk NEWS2", f"{ppg_scored} dari {len(detail['timeline'])} catatan" if detail["timeline"] else "-"),
+        ])
     else:
-        pdf.pairs([("Estimasi", "tidak tersedia selama perjalanan")])
+        pdf.pairs([("Estimasi", "tidak tersedia selama perjalanan (belum dikalibrasi dengan manset)")])
     pdf.set_font("Helvetica", "I", 7.5)
     pdf.set_text_color(90, 90, 90)
     accuracy = ""
     if "sbp_mae" in bp_label:
-        accuracy = (f" Pada data uji {bp_label.get('dataset')} ({bp_label.get('test_subjects')} subjek): rata-rata meleset "
-                    f"+/-{bp_label['sbp_mae']} mmHg (sistolik) dan +/-{bp_label['dbp_mae']} mmHg (diastolik); "
-                    f"{bp_label['sbp_within_10_pct']}% estimasi sistolik dalam +/-10 mmHg.")
-    pdf.multi_cell(0, 4, _t("Tidak dipakai untuk triase. Belum divalidasi pada sensor ini; bukan pengganti manset." + accuracy),
+        accuracy = (f" Pada data uji {bp_label.get('dataset')}: rata-rata meleset +/-{bp_label['sbp_mae']} mmHg (sistolik) "
+                    f"dan +/-{bp_label['dbp_mae']} mmHg (diastolik); {bp_label['sbp_within_10_pct']}% estimasi sistolik "
+                    f"dalam +/-10 mmHg.")
+    pdf.multi_cell(0, 4, _t("Estimasi dikalibrasi dengan TD manset dan dipakai untuk skor NEWS2 sistolik selama masih berlaku. "
+                            "Belum divalidasi pada relawan SIREN; bukan pengganti manset." + accuracy),
                    new_x="LMARGIN", new_y="NEXT")
     pdf.set_text_color(30, 30, 30)
 

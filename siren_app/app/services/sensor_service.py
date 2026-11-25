@@ -27,8 +27,10 @@ from app.services.serial_hub import SerialHub
 
 log = logging.getLogger("siren.sensors")
 
-WAVE_BUFFER_S = 60
+# Enough for a 30 s window that ended BP_CUFF_ENTRY_LAG_S ago, plus margin
+WAVE_BUFFER_S = 180
 WAVE_MAX_FS = 100
+MOTION_KEEP = 120   # accelerometer RMS values kept, about one per second
 
 
 @dataclass
@@ -80,6 +82,9 @@ class SensorManager:
         self.ports: dict[str, PortInfo] = {}
         self.wave: deque[tuple[float, float]] = deque(maxlen=WAVE_BUFFER_S * WAVE_MAX_FS)
         self.wave_fs: float | None = None
+        self.gain_ms: deque[float] = deque(maxlen=64)       # device ms of LED gain steps
+        self.motion: deque[tuple[float, float]] = deque(maxlen=MOTION_KEEP)   # (wall time, accel RMS g)
+        self.wave_resets = 0                                # continuity breaks: board restart or lost lines
         self._lock = threading.RLock()
         self._reported: dict[str, str] = {}
         # Bumped on every mode switch. A line still in flight from the old
@@ -134,6 +139,8 @@ class SensorManager:
             self.ports.clear()
             self.wave.clear()
             self.wave_fs = None
+            self.gain_ms.clear()
+            self.motion.clear()
             save_runtime_state(self.cfg.STATE_PATH, {"sensor_mode": self.mode, "mock_scenario": self.scenario})
             if self._running:
                 self._start_source()
@@ -178,9 +185,14 @@ class SensorManager:
             elif parsed.kind == "WAVE":
                 info.role = "PPG"
                 self._append_wave(parsed.data)
+            elif parsed.kind == "GAIN":
+                info.role = "PPG"
+                self.gain_ms.append(float(parsed.data["device_ms"]))
             elif parsed.kind == "TEMP":
                 info.role = "TEMP"
                 self.temp = NodeState(port, now, parsed.data)
+            if parsed.kind in ("PPG", "TEMP") and parsed.data.get("accel_rms") is not None:
+                self.motion.append((now, parsed.data["accel_rms"]))
 
     def _append_wave(self, data: dict[str, Any]) -> None:
         fs = data["fs"]
@@ -194,6 +206,8 @@ class SensorManager:
             # backwards (it reset) breaks continuity. Start a fresh window.
             if times[0] - last > 3 * step or times[0] < last - step:
                 self.wave.clear()
+                self.gain_ms.clear()
+                self.wave_resets += 1
         self.wave.extend(zip(times, samples))
         self.wave_fs = fs
 
@@ -249,6 +263,35 @@ class SensorManager:
         times, values = data[:, 0], data[:, 1]
         keep = times >= times[-1] - window_s * 1000.0
         return times[keep], values[keep], fs
+
+    def bp_window(self, lag_s: float = 0.0, window_s: float = 31.0) -> tuple[np.ndarray | None, np.ndarray | None, str]:
+        """Raw IR for the BP model: the window_s seconds that ended lag_s ago.
+
+        Returns (times_ms, values, "OK") or (None, None, reason). A window that
+        contains an LED gain step is refused, because the step looks like a
+        pulse change (siren-bp-model-test, live_bp.py).
+        """
+        times, values, _fs = self.waveform(WAVE_BUFFER_S)
+        if times.size == 0:
+            return None, None, "NO_WAVEFORM"
+        end = times[-1] - lag_s * 1000.0
+        with self._lock:
+            gains = list(self.gain_ms)
+        if times[0] > end - (window_s - 1.0) * 1000.0:
+            return None, None, "COLLECTING"
+        if any(end - window_s * 1000.0 < g <= end for g in gains):
+            return None, None, "GAIN_CHANGE"
+        keep = (times > end - window_s * 1000.0) & (times <= end)
+        if keep.sum() < 25 * 25:
+            return None, None, "COLLECTING"
+        return times[keep], values[keep], "OK"
+
+    def motion_median(self, seconds: float = 30.0, lag_s: float = 0.0) -> float | None:
+        """Median accelerometer RMS over a past stretch; one bump is not 'moving'."""
+        now = time.time() - lag_s
+        with self._lock:
+            vals = [v for t, v in self.motion if now - seconds <= t <= now]
+        return float(np.median(vals)) if vals else None
 
     def status_payload(self) -> dict[str, Any]:
         now = time.time()
@@ -318,6 +361,14 @@ def _round(value: float | None) -> float | None:
     return None if value is None else round(value, 1)
 
 
+def _mock_pulse(phase: float, notch: float, rise: float) -> float:
+    """One beat on phase 0..1: fast systolic rise, slower decay, dicrotic bump."""
+    systolic = math.exp(-((phase - rise) ** 2) / (2 * (rise / 2.2) ** 2))
+    decay = math.exp(-(phase - rise) / 0.35) if phase > rise else 0.0
+    dicrotic = notch * math.exp(-((phase - 0.45) ** 2) / (2 * 0.05 ** 2))
+    return 0.6 * systolic + 0.4 * decay + dicrotic
+
+
 class MockFeeder:
     """Synthetic board output, fed through the real parser.
 
@@ -357,6 +408,10 @@ class MockFeeder:
             "temp": 36.8 + 1.1 * p + jitter(-0.05, 0.05),
             "pi": 1.4 - 1.0 * p,
             "motion": abs(random.gauss(0.04, 0.02)),
+            # Pulse shape drifts as the simulated patient deteriorates, so the
+            # BP estimate has something to follow. Invented, not physiology.
+            "notch": 0.25 - 0.12 * p,
+            "rise": 0.15 - 0.03 * p,
         }
 
     def lines(self, elapsed: float) -> list[tuple[str, str]]:
@@ -377,9 +432,12 @@ class MockFeeder:
         for _ in range(int(self.FS)):
             self._phase = (self._phase + v["hr"] / 60.0 / self.FS) % 1.0
             self._resp_phase = (self._resp_phase + v["rr"] / 60.0 / self.FS) % 1.0
-            pulse = math.exp(-((self._phase - 0.15) / 0.06) ** 2) + 0.35 * math.exp(-((self._phase - 0.45) / 0.08) ** 2)
-            # Reflectance IR dips at systole, as the real sensor does
-            ir = 120000 - 900 * pulse + 250 * math.sin(2 * math.pi * self._resp_phase) + random.gauss(0, 15)
+            resp = math.sin(2 * math.pi * self._resp_phase)
+            # Beat shape from siren-bp-model-test (bp_model/synthetic.py): wide
+            # enough at 25 Hz for the BP model's beat finder. Reflectance IR
+            # dips at systole, as the real sensor does.
+            pulse = _mock_pulse(self._phase, v["notch"], v["rise"]) * (1 + 0.08 * resp) + 0.15 * resp
+            ir = 120000 - 1200 * pulse + random.gauss(0, 10)
             samples.append(str(int(ir)))
         wave_line = f"W,{self._device_ms},{self.FS:.2f}," + ",".join(samples)
 

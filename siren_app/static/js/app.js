@@ -364,8 +364,8 @@ const SIREN = (() => {
     if (printer.ok) renderPrinter(printer.data);
   }
 
-  // --------------------------------------------------- deterioration alerts
-  // MERAH: alarm repeating until acknowledged. NEWS2 rise: one beep.
+  // ----------------------------------------------------------- notifications
+  // MERAH: a short alarm (three bursts). NEWS2 rise and cuff reminders: one beep.
   // Sound is synthesised, so it works offline with no audio files.
   const sound = (() => {
     let ctx = null;
@@ -400,61 +400,134 @@ const SIREN = (() => {
       beep() { tone(660, 0, 0.14); tone(880, 0.18, 0.18); },
       alarm() {
         if (loop) return;
+        let left = 3;
         alarmBurst();
-        loop = setInterval(alarmBurst, 1500);
+        loop = setInterval(() => { left -= 1; if (left <= 0) { clearInterval(loop); loop = null; } else alarmBurst(); }, 1500);
       },
       stop() { clearInterval(loop); loop = null; },
     };
   })();
 
+  // A small list at the top left. A new card comes in on top and pushes the
+  // older ones down. A NEWS2 rise leaves after 5 s and MERAH after 7 s,
+  // or on a tap. A cuff reminder stays until "Ukur".
   const alerts = (() => {
-    let current = null;
-    const beeped = new Set();
+    const SHOWN = 3;                 // cards visible at once
+    const GAP = 8;
+    const SHOW_MS = { beep: 5000, alarm: 7000 };
+    const cards = new Map();         // id -> { item, node }
+    const sounded = new Set();
+    const gone = new Set();          // closed on this screen; the server may still list it a moment
+    let order = [];                  // ids, newest first
 
-    function render(items) {
-      const banner = document.getElementById('alertBanner');
-      if (!banner) return;
-      if (!items.length) {
-        current = null;
-        banner.classList.add('hidden');
-        sound.stop();
-        return;
-      }
-      const item = items[0];
-      current = item;
-      banner.className = `alert-banner ${item.level === 'alarm' ? 'alarm' : 'beep'}`;
-      setText('alertTitle', item.title);
-      setText('alertMessage', item.message);
-      const more = items.length > 1 ? ` · ${items.length - 1} notifikasi lain menunggu` : '';
-      const muted = sound.blocked() ? ' · bunyi belum aktif: sentuh layar sekali' : '';
-      setText('alertMeta', `${item.patient_code} · ${time(item.created_at, true)}${more}${muted}`);
-      if (item.level === 'alarm') {
-        sound.alarm();
+    function iconFor(item) {
+      const tpl = document.getElementById('alertIcons');
+      const src = tpl && tpl.content.querySelector(`[data-icon="${item.action === 'cuff' ? 'cuff' : 'warn'}"]`);
+      return src ? src.firstElementChild.cloneNode(true) : el('span');
+    }
+
+    function build(item) {
+      const tone = item.level === 'alarm' ? 'alarm' : item.level === 'remind' ? 'remind' : 'beep';
+      const node = el('section', { class: `alert-card ${tone} entering`, role: item.level === 'alarm' ? 'alert' : 'status' });
+      const body = el('div', { class: 'alert-card-body' }, [
+        el('div', { class: 'alert-card-head' }, [
+          el('strong', { class: 'alert-card-title', text: item.title || '' }),
+          el('time', { class: 'alert-card-time', text: time(item.created_at, false) }),
+        ]),
+        el('p', { class: 'alert-card-msg', text: item.message || '' }),
+      ]);
+      node.append(iconFor(item), body);
+      if (item.action === 'cuff') {
+        const go = el('button', { type: 'button', class: 'alert-card-btn', text: 'Ukur' });
+        go.addEventListener('click', (ev) => { ev.stopPropagation(); act(item); });
+        node.append(go);
       } else {
-        sound.stop();
-        if (!beeped.has(item.id)) { beeped.add(item.id); sound.beep(); }
+        node.title = 'Sentuh untuk menutup';
+        node.addEventListener('click', () => dismiss(item));
       }
+      return node;
+    }
+
+    function layout() {
+      let y = 0;
+      order.forEach((id, i) => {
+        const { node } = cards.get(id);
+        node.style.zIndex = String(10 - i);
+        node.style.transform = `translateY(${y}px)`;
+        node.style.opacity = i < SHOWN ? '' : '0';
+        node.style.pointerEvents = i < SHOWN ? '' : 'none';
+        y += node.offsetHeight + GAP;
+      });
+      const muted = order.length && sound.blocked();
+      document.getElementById('alertStack')?.classList.toggle('muted', Boolean(muted));
+    }
+
+    function remove(id) {
+      const entry = cards.get(id);
+      if (!entry) return;
+      cards.delete(id);
+      order = order.filter((x) => x !== id);
+      entry.node.classList.add('leaving');
+      setTimeout(() => entry.node.remove(), 240);
+    }
+
+    function render(all) {
+      const stack = document.getElementById('alertStack');
+      if (!stack) return;
+      const items = all.filter((i) => !gone.has(i.id));
+      const ids = new Set(items.map((i) => i.id));
+      [...cards.keys()].filter((id) => !ids.has(id)).forEach(remove);
+      items.forEach((item) => {
+        if (cards.has(item.id)) return;
+        const node = build(item);
+        cards.set(item.id, { item, node });
+        stack.prepend(node);
+        requestAnimationFrame(() => requestAnimationFrame(() => node.classList.remove('entering')));
+        if (!sounded.has(item.id)) {
+          sounded.add(item.id);
+          if (item.level === 'alarm') sound.alarm(); else sound.beep();
+        }
+        if (item.action !== 'cuff' && SHOW_MS[item.level]) {
+          setTimeout(() => { gone.add(item.id); remove(item.id); layout(); }, SHOW_MS[item.level]);
+        }
+      });
+      order = items.map((i) => i.id);   // the server lists newest first
+      layout();
     }
 
     async function poll() {
+      if (document.body.dataset.alerts === 'off') return;
       const result = await api('/api/notifications');
       if (result.ok) render(result.data.items);
     }
 
-    async function acknowledge() {
-      if (!current) return;
-      const item = current;
+    async function dismiss(item) {
+      gone.add(item.id);
+      remove(item.id);
+      layout();
+      if (item.level === 'alarm') sound.stop();
       const result = await api(`/api/notifications/${item.id}/ack`, { method: 'POST' });
-      if (!result.ok) {
-        toast(`Notifikasi belum terkonfirmasi. ${result.error}`, { type: 'error' });
-        return;
-      }
-      sound.stop();
-      toast(`Dikonfirmasi pukul ${time(result.data.ack_at, true)}.`, { type: 'success' });
-      poll();
+      if (!result.ok) toast(`Notifikasi belum tertutup. ${result.error}`, { type: 'error' });
     }
 
-    return { poll, acknowledge };
+    // K closes the newest alert; a cuff reminder only goes with "Ukur"
+    function acknowledge() {
+      const id = order.find((x) => cards.get(x).item.action !== 'cuff');
+      if (id) dismiss(cards.get(id).item);
+    }
+
+    // "Ukur": the monitor keeps the PPG from before the cuff inflates; any
+    // other page goes to the monitor first.
+    async function act(item) {
+      if (typeof window.sirenCuffStart === 'function') {
+        await dismiss(item);
+        window.sirenCuffStart();
+      } else {
+        window.location.href = '/monitor?cuff=1';
+      }
+    }
+
+    return { poll, acknowledge, act };
   })();
 
   function startClock() {
@@ -477,11 +550,13 @@ const SIREN = (() => {
     document.querySelectorAll('[data-close-dialog]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
     refreshSystem();
     setInterval(refreshSystem, 5000);
-    document.getElementById('alertAck')?.addEventListener('click', alerts.acknowledge);
     ['pointerdown', 'keydown'].forEach((type) => document.addEventListener(type, sound.unlock, { passive: true }));
-    shortcut('K', 'Konfirmasi notifikasi pasien memburuk', alerts.acknowledge);
-    alerts.poll();
-    setInterval(alerts.poll, 2000);
+    shortcut('K', 'Tutup notifikasi', () => alerts.acknowledge());
+    window.sirenAlerts = alerts;   // pages refresh the stack right after an action that closes a reminder
+    if (document.body.dataset.alerts !== 'off') {
+      alerts.poll();
+      setInterval(alerts.poll, 2000);
+    }
     // /monitor#drawerManual opens that panel once the page has its data
     const hash = window.location.hash.slice(1);
     if (hash && document.getElementById(hash)?.classList.contains('drawer')) setTimeout(() => openDrawer(hash), 600);

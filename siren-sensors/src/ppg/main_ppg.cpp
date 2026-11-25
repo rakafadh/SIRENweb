@@ -83,15 +83,13 @@ static const uint32_t TEMP_STALE_MS = 5000;
 // 1 prints machine-readable CSV, which is what tools/siren_dashboard.py parses.
 #define CSV_OUTPUT 1
 
-// 1 also prints the raw IR waveform, one line per refresh block, for the
-// host's blood-pressure estimator (siren_app). Each line starts with 'W', so
-// parsers that only accept rows beginning with a digit, such as
-// tools/siren_dashboard.py, skip it unchanged.
-//
-//   W,<millis of the block's last sample>,<measured fs>,<ir_1>,...,<ir_25>
-//
-// Samples are raw counts, oldest first, not filtered and not inverted. The
-// measured rate travels with every block because the host has to resample.
+// 1 also prints the raw IR waveform for the BP model (siren-bp-model-test,
+// scripts/live_bp.py), one line per 25 samples:
+//   W,<ms of the block's last sample>,<fs>,<ir_1>,...,<ir_25>
+// and a marker whenever the automatic gain changes the LED current, because
+// a 30 s window containing that step cannot be used for BP:
+//   G,<ms>,<led>
+// Both start with a letter, so tools/siren_dashboard.py skips them.
 #define WAVEFORM_OUTPUT 1
 
 // --------------------------------------------------------------- globals ----
@@ -102,7 +100,6 @@ float fsConfigured = FS_NOMINAL;
 
 uint32_t irBuffer[BUFFER_LENGTH];
 uint32_t redBuffer[BUFFER_LENGTH];
-uint32_t rawIrBlock[REFRESH_SAMPLES];   // unfiltered IR of the newest block
 
 int32_t spo2 = 0;       int8_t spo2Valid = 0;
 int32_t heartRate = 0;  int8_t hrValid   = 0;
@@ -147,6 +144,22 @@ static uint8_t  qHead = 0, qCount = 0;
 static uint32_t lastSampleMs = 0;     // timestamp of the sample just returned
 static uint32_t fifoReadErrors = 0;
 static double   sampleClockMs  = 0.0;  // running sample clock, ms
+
+#if WAVEFORM_OUTPUT
+static uint32_t wfIr[25];
+static uint8_t  wfCount = 0;
+
+// Collect raw IR and print one W line per 25 samples. Raw, before any
+// filtering: the BP model does its own band-pass and needs the pulse shape.
+static void waveformAdd(uint32_t rawIr, uint32_t ms) {
+    wfIr[wfCount++] = rawIr;
+    if (wfCount < 25) return;
+    Serial.printf("W,%lu,%.2f", (unsigned long)ms, fsMeasured);
+    for (uint8_t i = 0; i < wfCount; i++) Serial.printf(",%lu", (unsigned long)wfIr[i]);
+    Serial.print('\n');
+    wfCount = 0;
+}
+#endif
 
 static void fifoFill() {
     uint8_t wrRaw = maxReadReg(MAX_REG_FIFO_WR);
@@ -194,7 +207,7 @@ static void fifoFill() {
     }
 }
 
-static void readOneSample(uint32_t &red, uint32_t &ir, uint32_t *rawIrOut = nullptr) {
+static void readOneSample(uint32_t &red, uint32_t &ir) {
     while (qCount == 0) {
         fifoFill();
         if (qCount == 0) delay(2);
@@ -205,11 +218,13 @@ static void readOneSample(uint32_t &red, uint32_t &ir, uint32_t *rawIrOut = null
     qHead = (qHead + 1) & 0x1F;
     qCount--;
     lastSampleMs = now;
-    if (rawIrOut) *rawIrOut = rawIr;
 
     // Respiration works on the RAW signal. RIIV lives at 0.1 to 0.6 Hz,
     // which the 0.5 Hz highpass in PpgFilter would remove.
     resp.addSample(rawIr, now);
+#if WAVEFORM_OUTPUT
+    waveformAdd(rawIr, now);
+#endif
 
     // RR on a fixed one-second cadence, independent of the sample rate. At
     // 10 Hz one loop() block takes 2.5 s, so tying it to loop() was slow.
@@ -260,6 +275,9 @@ static void adjustGain(uint32_t irDc) {
         if (nextLed != ledPower) {
             setLedPower(nextLed);
             gainChanged = true;
+#if WAVEFORM_OUTPUT
+            Serial.printf("G,%lu,%u\n", (unsigned long)lastSampleMs, ledPower);
+#endif
             holdOneBlock = true;
         }
     }
@@ -346,6 +364,20 @@ void setup() {
     Serial.println(F("MAX30102 ready."));
     dumpMaxConfig();
 
+    // TEMP DIAGNOSTIC: measure the sensor's true output rate. The FIFO is
+    // emptied, nothing reads it for one second, then the write pointer shows
+    // how many samples the chip produced. Remove once the rate is known.
+    for (int pass = 0; pass < 3; pass++) {
+        maxWriteReg(0x04, 0);   // FIFO_WR_PTR
+        maxWriteReg(0x05, 0);   // OVF_COUNTER
+        maxWriteReg(0x06, 0);   // FIFO_RD_PTR
+        delay(1000);
+        uint8_t produced = maxReadReg(0x04) & 0x1F;
+        uint8_t overflow = maxReadReg(0x05) & 0x1F;
+        Serial.printf("FIFO TEST %d: sensor produced %u samples in 1 s (overflow %u)\n",
+                      pass + 1, produced, overflow);
+    }
+
     resp.begin();
     redFilter.configure(FS_NOMINAL);
     irFilter.configure(FS_NOMINAL);
@@ -386,14 +418,12 @@ void loop() {
     // instantly.
     static uint32_t prevBlockEndMs = 0;
     for (int32_t i = BUFFER_LENGTH - REFRESH_SAMPLES; i < BUFFER_LENGTH; i++) {
-        readOneSample(redBuffer[i], irBuffer[i],
-                      &rawIrBlock[i - (BUFFER_LENGTH - REFRESH_SAMPLES)]);
+        readOneSample(redBuffer[i], irBuffer[i]);
     }
     if (prevBlockEndMs != 0 && lastSampleMs > prevBlockEndMs) {
         fsMeasured = (float)REFRESH_SAMPLES * 1000.0f / (float)(lastSampleMs - prevBlockEndMs);
     }
     prevBlockEndMs = lastSampleMs;
-    const uint32_t blockEndMs = lastSampleMs;
 
     // Filter cutoffs are defined relative to the sample rate, so if the real
     // rate differs from what the filters were designed for, redesign them.
@@ -545,14 +575,6 @@ void loop() {
     else if (saturated)     Serial.print(F("  [saturated]"));
     else if (weakPulse)     Serial.print(F("  [weak pulse]"));
     else if (gainChanged)   Serial.print(F("  [gain settling]"));
-    Serial.println();
-#endif
-
-#if WAVEFORM_OUTPUT
-    Serial.printf("W,%lu,%.2f", (unsigned long)blockEndMs, fsMeasured);
-    for (int32_t i = 0; i < REFRESH_SAMPLES; i++) {
-        Serial.printf(",%lu", (unsigned long)rawIrBlock[i]);
-    }
     Serial.println();
 #endif
 

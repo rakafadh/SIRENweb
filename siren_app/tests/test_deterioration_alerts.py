@@ -161,3 +161,68 @@ def test_reference_survives_a_restart(client, app_module):
         app_module.monitor.tick()
     # Same scores as already announced: no second alert after the restart
     assert len(client.get("/api/notifications").json()["items"]) == 1
+
+
+def _rise(client, app_module):
+    """Admit a patient and raise one NEWS2 alert; returns (patient, clock)."""
+    clock = app_module.monitor.clock = FakeClock()
+    patient = client.post("/api/patients", json={"acvpu": "alert", "systolic": 125, "diastolic": 80}).json()["patient"]
+    feed(app_module, 85, 97, 16, 1000)
+    app_module.monitor.tick()
+    for second in range(1, 9):
+        clock.now += 1
+        feed(app_module, 112, 97, 22, 1000 + second * 1000)
+        app_module.monitor.tick()
+    return patient, clock
+
+
+def test_alerts_leave_the_screen_on_their_own(client, app_module, monkeypatch):
+    from datetime import timedelta
+
+    _rise(client, app_module)
+    assert len(client.get("/api/notifications").json()["items"]) == 1
+    later = app_module.utcnow() + timedelta(seconds=16)       # a NEWS2 rise is listed for 15 s
+    monkeypatch.setattr(app_module, "utcnow", lambda: later)
+    assert client.get("/api/notifications").json()["items"] == []
+
+
+def test_notifications_newest_first(client, app_module):
+    from app.database import new_session
+    from app.models import PatientEvent
+
+    patient, _ = _rise(client, app_module)
+    db = new_session()
+    db.add(PatientEvent(patient_id=patient["id"], kind="PENGINGAT", detail="Ukur TD manset.",
+                        data={"kind": "MANSET", "level": "remind", "title": "Ukur TD manset", "message": "x",
+                              "action": "cuff", "ack_at": None}))
+    db.commit()
+    db.close()
+    items = client.get("/api/notifications").json()["items"]
+    assert [i["kind"] for i in items] == ["MANSET", "NEWS2"]
+
+
+def test_handover_page_stops_monitoring_and_alerts(client, app_module):
+    patient, clock = _rise(client, app_module)
+    feed(app_module, 112, 97, 22, 30000)
+    app_module.monitor.tick()
+    page = client.get(f"/patients/{patient['id']}")
+    assert page.status_code == 200 and 'data-alerts="off"' in page.text
+    assert client.get("/api/notifications").json()["items"] == []
+
+    end = client.get(f"/api/patients/{patient['id']}").json()["journey"]["end"]
+    snapshots = len(client.get(f"/api/patients/{patient['id']}").json()["timeline"])
+    for second in range(40, 80):                             # worse, but nobody is monitoring now
+        clock.now += 1
+        feed(app_module, 135, 90, 26, second * 1000)
+        app_module.monitor.tick()
+    detail = client.get(f"/api/patients/{patient['id']}").json()
+    assert detail["journey"]["end"] == end                   # the summary stopped on arrival
+    assert len(detail["timeline"]) == snapshots
+    assert client.get("/api/notifications").json()["items"] == []
+
+    assert client.get("/monitor").status_code == 200        # back to the monitor: it carries on
+    clock.now += 1
+    feed(app_module, 135, 90, 26, 90000)
+    app_module.monitor.tick()
+    assert len(client.get(f"/api/patients/{patient['id']}").json()["timeline"]) > snapshots
+    assert client.get("/api/notifications").json()["items"][0]["level"] == "alarm"

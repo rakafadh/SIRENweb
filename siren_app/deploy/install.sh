@@ -16,9 +16,9 @@ fi
 case "$APP_DIR" in
     *" "*) echo "Path $APP_DIR mengandung spasi. Pindahkan proyek ke folder tanpa spasi." >&2; exit 1 ;;
 esac
-if [ ! -f "$APP_DIR/models/bp_model.joblib" ]; then
-    echo "Peringatan: model BP tidak ditemukan di $APP_DIR/models/." >&2
-    echo "Aplikasi tetap jalan, tetapi estimasi BP akan tampil 'model tidak ditemukan'." >&2
+if [ ! -f "$APP_DIR/models/bp_calibrated_vitaldb.joblib" ] || [ ! -f "$APP_DIR/models/alert_settings_vitaldb.json" ]; then
+    echo "Peringatan: model TD tidak lengkap di $APP_DIR/models/." >&2
+    echo "Aplikasi tetap jalan, tetapi estimasi TD PPG tidak tersedia dan triase hanya memakai TD manset." >&2
 fi
 
 echo "== Paket sistem"

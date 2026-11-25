@@ -16,7 +16,7 @@
     </script>
     <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}" />
   </head>
-  <body class="page-{{ nav or 'other' }}">
+  <body class="page-{{ nav or 'other' }}"{% if quiet_alerts %} data-alerts="off"{% endif %}>
     <a class="skip-link" href="#main">Lewati ke konten</a>
     <div class="app">
       <header class="appbar">
@@ -62,15 +62,9 @@
         </div>
       </header>
 
-      <section id="alertBanner" class="alert-banner hidden" role="alertdialog" aria-labelledby="alertTitle" aria-describedby="alertMessage">
-        <span class="alert-icon">{{ icon('warning') }}</span>
-        <div class="alert-body">
-          <strong class="alert-title" id="alertTitle"></strong>
-          <p class="alert-message" id="alertMessage"></p>
-          <p class="alert-meta" id="alertMeta"></p>
-        </div>
-        <button type="button" class="btn alert-ack" id="alertAck">Saya mengerti <kbd>K</kbd></button>
-      </section>
+      <!-- Notifications: a small stack at the top left, newest on top (app.js) -->
+      <div id="alertStack" class="alert-stack" aria-live="assertive"></div>
+      <template id="alertIcons"><span data-icon="warn">{{ icon('warning') }}</span><span data-icon="cuff">{{ icon('heartbeat') }}</span></template>
 
       <div id="connBanner" class="conn-banner hidden" role="alert">
         <strong>Koneksi ke server SIREN terputus.</strong>

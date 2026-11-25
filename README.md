@@ -15,14 +15,15 @@ SIREN/
 ├── siren_app/                aplikasi SIREN (FastAPI + SQLite + tampilan web)
 │   ├── app/                  kode server
 │   ├── templates/, static/   tampilan
-│   ├── models/               model estimasi tekanan darah dan angka akurasinya
+│   ├── models/               model estimasi tekanan darah (dikalibrasi manset) dan pengaturannya
 │   ├── deploy/               skrip instal Orange Pi (systemd, kiosk, udev)
 │   └── tests/                test otomatis
 ├── siren-sensors/            firmware ESP32 (PlatformIO)
 │   ├── src/ppg/              node PPG: MAX30102
 │   ├── src/temp/             node suhu: MLX90614 + MPU6050
 │   └── tools/                triage.py (algoritma rujukan laporan) dan dashboard uji hardware
-└── BloodPressure-Model/      skrip melatih ulang model tekanan darah; hasilnya ditulis ke siren_app/models/
+├── siren-bp-model-test/      sumber model tekanan darah yang dipakai: pelatihan, evaluasi, uji live
+└── BloodPressure-Model/      model tekanan darah versi lama, tidak dipakai aplikasi lagi
 ```
 
 ## Mulai cepat di laptop
@@ -72,6 +73,6 @@ Tekan `?` di layar mana pun untuk daftar pintasan keyboard.
 | Kode utama | `app/main.py` (route), `app/services/monitor.py` (loop triase 1 detik), `app/services/sensor_service.py` (pembacaan ESP32 dan simulasi) |
 | Firmware | `siren-sensors/` dengan PlatformIO: `pio run -e ppg` / `-e temp` |
 | QR label | `app/siren_qr/` disalin tanpa perubahan dari [thaniyuck/siren](https://github.com/thaniyuck/siren) (lihat `SOURCE.md`); `app/services/transport_record.py` menyusun datanya dari database |
-| Model BP | Dipakai dari `siren_app/models/`. Melatih ulang: `BloodPressure-Model/train_bp_model.py` lalu `evaluate_bp_model.py` (butuh folder `dataset/`); keduanya langsung menimpa file di `siren_app/models/`. |
+| Model BP | Estimasi TD dari gelombang PPG, dikalibrasi dengan TD manset: `bp_calibrated_vitaldb.joblib` dan `alert_settings_vitaldb.json` di `siren_app/models/`. Kode model disalin dari `siren-bp-model-test/` ke `app/bp_calibrated/` (cara memperbarui ada di `SOURCE.md`); `app/services/bp_service.py` menyambungkannya ke aplikasi. |
 
 Konteks lengkap proyek, termasuk keputusan desain, hasil model, dan keterbatasan, ada di `../SIREN_CONTEXT.md`.

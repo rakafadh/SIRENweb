@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+results/*
+!results/.gitkeep
+vitaldb_cache/
+# big local data, rebuilt by the download scripts
+vitaldb_cache.zip
+vitaldb_pat_cache/
+vitaldb_resp_cache/
+# old MIMIC model (49 MB); the live model is bp_calibrated_vitaldb.joblib
+model/bp_calibrated.joblib

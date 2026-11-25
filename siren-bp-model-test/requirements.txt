@@ -1,0 +1,13 @@
+# The OLD model was saved with scikit-learn 1.5.2. Keep this pin so it loads
+# exactly. The new calibrated model is trained on your machine with the same
+# version, so the two stay comparable.
+numpy==2.2.0
+scipy==1.14.1
+scikit-learn==1.5.2
+joblib==1.4.2
+matplotlib>=3.8
+pytest>=8
+# VitalDB open dataset downloader (scripts/vitaldb_download.py)
+vitaldb==1.7.2
+# live BP from the PPG board (scripts/live_bp.py)
+pyserial>=3.5

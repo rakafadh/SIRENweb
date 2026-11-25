@@ -40,6 +40,7 @@ def client(app_module):
         db.close()
         app_module.monitor.patient_id = None
         app_module.monitor.latest = None
+        app_module.monitor.paused_at = None
         app_module.monitor.clock = __import__("time").time
         app_module.sensor_manager.mode = "SERIAL"
         app_module.sensor_manager.scenario = "stable"
@@ -47,4 +48,7 @@ def client(app_module):
         app_module.sensor_manager.ppg = type(app_module.sensor_manager.ppg)()
         app_module.sensor_manager.temp = type(app_module.sensor_manager.temp)()
         app_module.sensor_manager.wave.clear()
+        app_module.sensor_manager.gain_ms.clear()
+        app_module.sensor_manager.motion.clear()
+        app_module.bp_estimator.reset()
         yield test_client

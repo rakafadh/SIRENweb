@@ -1,0 +1,18 @@
+{
+  "drop_alert_mmhg": 6.4,
+  "hypotension_alert_sbp": 105.5,
+  "kalman": {
+    "q": 128.0,
+    "q_dbp_ratio": 0.3,
+    "cuff_sd": 6.0,
+    "s0": 8.938254202088151,
+    "s1": 0.5736260043900288,
+    "dbp_ratio": 0.7625363437036525,
+    "r_scale": 0.5
+  },
+  "news2_score_z": 0.0,
+  "gain_lambda": null,
+  "max_anchors": 3,
+  "max_false_alarm_pct": 20.0,
+  "trained_on": "VitalDB"
+}

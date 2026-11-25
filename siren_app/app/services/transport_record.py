@@ -58,7 +58,7 @@ def transport_record(detail: dict[str, Any], printed_at: datetime | None = None)
     readings = []
     for row in detail["timeline"]:
         tri = row.get("triage") or {}
-        ppg_ok = row.get("bp_est_status") == "OK"
+        ppg_ok = row.get("bp_est_status") in ("OK", "AWAITING_CUFF")
         readings.append({
             "t": row["captured_at"],
             "hr": row.get("hr"), "spo2": row.get("spo2"), "rr": row.get("rr"), "temp": row.get("temp"),
