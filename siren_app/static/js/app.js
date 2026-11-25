@@ -409,12 +409,12 @@ const SIREN = (() => {
   })();
 
   // A small list at the top left. A new card comes in on top and pushes the
-  // older ones down. A NEWS2 rise leaves after 5 s and MERAH after a minute,
+  // older ones down. A NEWS2 rise leaves after 5 s and MERAH after 7 s,
   // or on a tap. A cuff reminder stays until "Ukur".
   const alerts = (() => {
     const SHOWN = 3;                 // cards visible at once
     const GAP = 8;
-    const SHOW_MS = { beep: 5000, alarm: 60000 };
+    const SHOW_MS = { beep: 5000, alarm: 7000 };
     const cards = new Map();         // id -> { item, node }
     const sounded = new Set();
     const gone = new Set();          // closed on this screen; the server may still list it a moment

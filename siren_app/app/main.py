@@ -310,9 +310,9 @@ def manual_vitals(patient_id: str, body: ManualVitals, db: Session = Depends(get
 # ----------------------------------------------------------- notifications --
 NOTIFICATION_KINDS = ("NOTIFIKASI", "PENGINGAT")   # deterioration alerts, cuff reminders
 # Deterioration alerts are a nudge, not a task: they leave the screen on their
-# own (the screen shows a NEWS2 rise for 5 s; listed a little longer so a 2 s
-# poll cannot miss it). A cuff reminder stays until the crew presses "Ukur".
-ALERT_SHOW_S = {"alarm": 60, "beep": 15}
+# own (the screen shows a NEWS2 rise for 5 s and MERAH for 7 s; listed a little
+# longer so a 2 s poll cannot miss them). A cuff reminder stays until "Ukur".
+ALERT_SHOW_S = {"alarm": 15, "beep": 15}
 
 
 def _serialize_notification(event: PatientEvent, patient: Patient) -> dict:
