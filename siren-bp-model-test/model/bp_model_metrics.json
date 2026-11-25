@@ -1,0 +1,47 @@
+{
+  "generated_at": "2026-10-19T04:51:20.974647+00:00",
+  "feature_version": "signal_summary_v1",
+  "dataset": "MIMIC-BP",
+  "test_subjects": 229,
+  "targets": {
+    "sbp": {
+      "MAE": 9.4,
+      "RMSE": 12.14,
+      "SD_of_error": 12.15,
+      "ME": -0.47,
+      "Pearson_r": 0.332,
+      "R2": 0.109,
+      "MAPE_pct": 8.3,
+      "within_mmHg_pct": {
+        "5": 34.1,
+        "10": 63.8,
+        "15": 79.9
+      },
+      "baseline_mean_MAE": 10.16
+    },
+    "dbp": {
+      "MAE": 7.0,
+      "RMSE": 8.73,
+      "SD_of_error": 8.67,
+      "ME": -1.18,
+      "Pearson_r": 0.4,
+      "R2": 0.135,
+      "MAPE_pct": 11.9,
+      "within_mmHg_pct": {
+        "5": 40.6,
+        "10": 74.7,
+        "15": 92.6
+      },
+      "baseline_mean_MAE": 7.57
+    }
+  },
+  "ppg_reference": {
+    "mean": 1.6716861518409907,
+    "std": 0.42016674227630013,
+    "windows": 33000
+  },
+  "input": {
+    "fs_hz": 125,
+    "window_samples": 3750
+  }
+}
