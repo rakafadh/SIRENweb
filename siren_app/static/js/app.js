@@ -364,8 +364,8 @@ const SIREN = (() => {
     if (printer.ok) renderPrinter(printer.data);
   }
 
-  // --------------------------------------------------- deterioration alerts
-  // MERAH: alarm repeating until acknowledged. NEWS2 rise: one beep.
+  // ----------------------------------------------------------- notifications
+  // MERAH: a short alarm (three bursts). NEWS2 rise and cuff reminders: one beep.
   // Sound is synthesised, so it works offline with no audio files.
   const sound = (() => {
     let ctx = null;
@@ -400,70 +400,117 @@ const SIREN = (() => {
       beep() { tone(660, 0, 0.14); tone(880, 0.18, 0.18); },
       alarm() {
         if (loop) return;
+        let left = 3;
         alarmBurst();
-        loop = setInterval(alarmBurst, 1500);
+        loop = setInterval(() => { left -= 1; if (left <= 0) { clearInterval(loop); loop = null; } else alarmBurst(); }, 1500);
       },
       stop() { clearInterval(loop); loop = null; },
     };
   })();
 
+  // A small stack at the top left, newest on top; older cards sit a little
+  // lower behind it. Deterioration alerts leave on their own (the server
+  // stops listing them) or on a tap. A cuff reminder stays until "Ukur".
   const alerts = (() => {
-    let current = null;
-    const beeped = new Set();
+    const SHOWN = 3;                 // cards visible in the stack
+    const cards = new Map();         // id -> { item, node }
+    const sounded = new Set();
+    let order = [];                  // ids, newest first
+
+    function iconFor(item) {
+      const tpl = document.getElementById('alertIcons');
+      const src = tpl && tpl.content.querySelector(`[data-icon="${item.action === 'cuff' ? 'cuff' : 'warn'}"]`);
+      return src ? src.firstElementChild.cloneNode(true) : el('span');
+    }
+
+    function build(item) {
+      const tone = item.level === 'alarm' ? 'alarm' : item.level === 'remind' ? 'remind' : 'beep';
+      const node = el('section', { class: `alert-card ${tone} entering`, role: item.level === 'alarm' ? 'alert' : 'status' });
+      const body = el('div', { class: 'alert-card-body' }, [
+        el('div', { class: 'alert-card-head' }, [
+          el('strong', { class: 'alert-card-title', text: item.title || '' }),
+          el('time', { class: 'alert-card-time', text: time(item.created_at, false) }),
+        ]),
+        el('p', { class: 'alert-card-msg', text: item.message || '' }),
+      ]);
+      node.append(iconFor(item), body);
+      if (item.action === 'cuff') {
+        const go = el('button', { type: 'button', class: 'alert-card-btn', text: 'Ukur' });
+        go.addEventListener('click', (ev) => { ev.stopPropagation(); act(item); });
+        node.append(go);
+      } else {
+        node.title = 'Sentuh untuk menutup';
+        node.addEventListener('click', () => dismiss(item));
+      }
+      return node;
+    }
+
+    function layout() {
+      order.forEach((id, i) => {
+        const { node } = cards.get(id);
+        node.style.zIndex = String(10 - i);
+        node.style.transform = `translateY(${i * 10}px) scale(${1 - i * 0.05})`;
+        node.style.opacity = i < SHOWN ? '' : '0';
+        node.classList.toggle('behind', i > 0);
+      });
+      const muted = order.length && sound.blocked();
+      document.getElementById('alertStack')?.classList.toggle('muted', Boolean(muted));
+    }
+
+    function remove(id) {
+      const entry = cards.get(id);
+      if (!entry) return;
+      cards.delete(id);
+      order = order.filter((x) => x !== id);
+      entry.node.classList.add('leaving');
+      setTimeout(() => entry.node.remove(), 240);
+    }
 
     function render(items) {
-      const banner = document.getElementById('alertBanner');
-      if (!banner) return;
-      if (!items.length) {
-        current = null;
-        banner.classList.add('hidden');
-        sound.stop();
-        return;
-      }
-      const item = items[0];
-      current = item;
-      banner.className = `alert-banner ${item.level === 'alarm' ? 'alarm' : item.level === 'remind' ? 'remind' : 'beep'}`;
-      const action = document.getElementById('alertAction');
-      if (action) action.classList.toggle('hidden', item.action !== 'cuff');
-      const ack = document.getElementById('alertAck');
-      if (ack) ack.replaceChildren(item.level === 'remind' ? 'Nanti ' : 'Saya mengerti ', el('kbd', { text: 'K' }));
-      setText('alertTitle', item.title);
-      setText('alertMessage', item.message);
-      const more = items.length > 1 ? ` · ${items.length - 1} notifikasi lain menunggu` : '';
-      const muted = sound.blocked() ? ' · bunyi belum aktif: sentuh layar sekali' : '';
-      setText('alertMeta', `${item.patient_code} · ${time(item.created_at, true)}${more}${muted}`);
-      if (item.level === 'alarm') {
-        sound.alarm();
-      } else {
-        sound.stop();
-        if (!beeped.has(item.id)) { beeped.add(item.id); sound.beep(); }
-      }
+      const stack = document.getElementById('alertStack');
+      if (!stack) return;
+      const ids = new Set(items.map((i) => i.id));
+      [...cards.keys()].filter((id) => !ids.has(id)).forEach(remove);
+      items.forEach((item) => {
+        if (cards.has(item.id)) return;
+        const node = build(item);
+        cards.set(item.id, { item, node });
+        stack.prepend(node);
+        requestAnimationFrame(() => requestAnimationFrame(() => node.classList.remove('entering')));
+        if (!sounded.has(item.id)) {
+          sounded.add(item.id);
+          if (item.level === 'alarm') sound.alarm(); else sound.beep();
+        }
+      });
+      order = items.map((i) => i.id);   // the server lists newest first
+      layout();
     }
 
     async function poll() {
+      if (document.body.dataset.alerts === 'off') return;
       const result = await api('/api/notifications');
       if (result.ok) render(result.data.items);
     }
 
-    async function acknowledge(quiet = false) {
-      if (!current) return;
-      const item = current;
+    async function dismiss(item) {
+      remove(item.id);
+      layout();
+      if (item.level === 'alarm') sound.stop();
       const result = await api(`/api/notifications/${item.id}/ack`, { method: 'POST' });
-      if (!result.ok) {
-        toast(`Notifikasi belum terkonfirmasi. ${result.error}`, { type: 'error' });
-        return;
-      }
-      sound.stop();
-      if (!quiet && item.level !== 'remind') toast(`Dikonfirmasi pukul ${time(result.data.ack_at, true)}.`, { type: 'success' });
-      poll();
+      if (!result.ok) toast(`Notifikasi belum tertutup. ${result.error}`, { type: 'error' });
     }
 
-    // Cuff reminder: "Mulai ukur manset". The monitor page keeps the PPG from
-    // before the cuff inflates; any other page goes to the monitor first.
-    async function act() {
-      if (!current || current.action !== 'cuff') return;
+    // K closes the newest alert; a cuff reminder only goes with "Ukur"
+    function acknowledge() {
+      const id = order.find((x) => cards.get(x).item.action !== 'cuff');
+      if (id) dismiss(cards.get(id).item);
+    }
+
+    // "Ukur": the monitor keeps the PPG from before the cuff inflates; any
+    // other page goes to the monitor first.
+    async function act(item) {
       if (typeof window.sirenCuffStart === 'function') {
-        await acknowledge(true);
+        await dismiss(item);
         window.sirenCuffStart();
       } else {
         window.location.href = '/monitor?cuff=1';
@@ -493,13 +540,13 @@ const SIREN = (() => {
     document.querySelectorAll('[data-close-dialog]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
     refreshSystem();
     setInterval(refreshSystem, 5000);
-    document.getElementById('alertAck')?.addEventListener('click', () => alerts.acknowledge());
-    document.getElementById('alertAction')?.addEventListener('click', alerts.act);
     ['pointerdown', 'keydown'].forEach((type) => document.addEventListener(type, sound.unlock, { passive: true }));
-    shortcut('K', 'Konfirmasi notifikasi', () => alerts.acknowledge());
-    window.sirenAlerts = alerts;   // pages refresh the banner right after an action that closes a reminder
-    alerts.poll();
-    setInterval(alerts.poll, 2000);
+    shortcut('K', 'Tutup notifikasi', () => alerts.acknowledge());
+    window.sirenAlerts = alerts;   // pages refresh the stack right after an action that closes a reminder
+    if (document.body.dataset.alerts !== 'off') {
+      alerts.poll();
+      setInterval(alerts.poll, 2000);
+    }
     // /monitor#drawerManual opens that panel once the page has its data
     const hash = window.location.hash.slice(1);
     if (hash && document.getElementById(hash)?.classList.contains('drawer')) setTimeout(() => openDrawer(hash), 600);

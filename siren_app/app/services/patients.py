@@ -188,7 +188,8 @@ def serialize_event(event: PatientEvent) -> dict[str, Any]:
     return {"created_at": event.created_at.isoformat(), "kind": event.kind, "detail": event.detail}
 
 
-def patient_detail(db: Session, patient: Patient) -> dict[str, Any]:
+def patient_detail(db: Session, patient: Patient, now: datetime | None = None) -> dict[str, Any]:
+    """now: where an active trip's summary ends (the handover page freezes it)."""
     readings = list(patient.readings)
     triages = list(patient.triage_results)
     pairs = {t.reading_id: t for t in triages}
@@ -227,7 +228,7 @@ def patient_detail(db: Session, patient: Patient) -> dict[str, Any]:
         "alerts": list(alerts_seen.values()),
         "cuffs": [{"at": e.created_at.isoformat(), "systolic": e.data.get("systolic"), "diastolic": e.data.get("diastolic")}
                   for e in patient.events if e.kind == "CUFF_BP" and e.data and e.data.get("systolic") is not None],
-        "journey": journey_summary(patient, readings, triages),
+        "journey": journey_summary(patient, readings, triages, now=now),
     }
 
 

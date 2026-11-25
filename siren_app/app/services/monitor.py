@@ -14,7 +14,7 @@ import logging
 import threading
 import time
 from collections import deque
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -113,6 +113,9 @@ class Monitor:
         self._last_news_total: int | None = None   # sets the cuff interval (5 min from NEWS2 5)
         self._reminder_state: str | None = None    # None | "due" | "overdue" for the open cuff request
         self._reminder_at: float | None = None     # when the open request was first announced
+        # Set while the handover page is open: the trip has arrived, so no new
+        # snapshots, alerts or cuff reminders until the crew goes back to the monitor.
+        self.paused_at: float | None = None
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -194,10 +197,13 @@ class Monitor:
                 patient = db.scalars(select(Patient).where(Patient.status == "ACTIVE").order_by(Patient.created_at.desc())).first()
                 if patient is None:
                     self.patient_id = None
+                    self.paused_at = None
                     self.latest = self._payload(None, self._vitals(), None, None, None)
                     return self.latest
                 if patient.id != self.patient_id:
                     self._activate(db, patient)
+                if self.paused_at is not None and self.latest is not None:
+                    return self.latest   # frozen at the moment the handover page opened
 
                 vitals = self._vitals()
                 # BP first: a usable estimate stands in for the cuff in NEWS2
@@ -233,6 +239,39 @@ class Monitor:
             finally:
                 db.close()
 
+    # ------------------------------------------------------------- handover --
+    def pause(self, patient_id: str) -> None:
+        """The handover page opened: keep the last values and stop alerting."""
+        with self._lock:
+            if self.paused_at is not None and self.patient_id == patient_id:
+                return
+            self.paused_at = None
+            self.tick(force_snapshot=True)   # the arrival values go to the database
+            if self.patient_id != patient_id:
+                return
+            self.paused_at = self.clock()
+            self._reminder_state = self._reminder_at = None
+            db = new_session()
+            try:
+                self._close_reminders(db, patient_id, "serah terima dimulai")
+            finally:
+                db.close()
+
+    def resume(self) -> None:
+        """Back on the monitor page: measuring and alerting carry on."""
+        with self._lock:
+            if self.paused_at is None:
+                return
+            self.paused_at = None
+            self._last_snapshot = 0.0   # write a fresh snapshot straight away
+            self.history.clear()        # no NEWS2 change across the gap
+
+    def paused_since(self, patient_id: str):
+        """When monitoring of this patient stopped for the handover page, if it has."""
+        if self.paused_at is None or self.patient_id != patient_id:
+            return None
+        return datetime.fromtimestamp(self.paused_at, timezone.utc)
+
     def _parts_a_window_ago(self, now: float) -> dict | None:
         """NEWS2 parts from the newest evaluation at least DELTA_WINDOW_S old."""
         past = None
@@ -255,6 +294,7 @@ class Monitor:
         self._bp_cache = None
         self._last_news_total = None
         self._reminder_state = self._reminder_at = None
+        self.paused_at = None
         self.bp.reset()   # the last patient's cuff calibration does not apply
 
         cutoff = utcnow() - timedelta(seconds=self.cfg.MANUAL_TTL_S)

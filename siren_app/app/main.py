@@ -124,6 +124,7 @@ def start_page(request: Request, db: Session = Depends(get_db)):
 def monitor_page(request: Request, db: Session = Depends(get_db)):
     if not active_patient(db):
         return RedirectResponse("/start", status_code=303)
+    monitor.resume()   # back from the handover page: measuring and alerts carry on
     return _page(request, "monitor.html", nav="monitor", page_title="Pemantauan", flow_step=2)
 
 
@@ -134,11 +135,19 @@ def handover_page(request: Request, patient_id: str, db: Session = Depends(get_d
         # Handover opens only once all required values are in or excused
         return RedirectResponse("/monitor?blocked=1", status_code=303)
     if patient.status == "ACTIVE":
+        # Arrived: the summary stops at this moment and no more alerts pop up
+        monitor.pause(patient.id)
         return _page(request, "handover.html", patient_id=patient.id, nav="monitor",
-                     page_title="Serah terima", flow_step=3)
+                     page_title="Serah terima", flow_step=3, quiet_alerts=True)
     # A finished patient opened from Riwayat: read-only summary, back to the list
     return _page(request, "handover.html", patient_id=patient.id, nav="history",
-                 page_title=f"Ringkasan {patient.code}", back_href="/history", back_label="Riwayat")
+                 page_title=f"Ringkasan {patient.code}", back_href="/history", back_label="Riwayat",
+                 quiet_alerts=True)
+
+
+def _detail(db: Session, patient: Patient) -> dict:
+    """Patient detail; an arrived trip (handover page open) ends when it arrived."""
+    return patient_detail(db, patient, now=monitor.paused_since(patient.id))
 
 
 def _ready_for_handover() -> bool:
@@ -250,7 +259,7 @@ def list_patients(db: Session = Depends(get_db)):
 
 @app.get("/api/patients/{patient_id}")
 def get_patient(patient_id: str, db: Session = Depends(get_db)):
-    return patient_detail(db, _get_patient(db, patient_id))
+    return _detail(db, _get_patient(db, patient_id))
 
 
 @app.patch("/api/patients/{patient_id}")
@@ -299,8 +308,10 @@ def manual_vitals(patient_id: str, body: ManualVitals, db: Session = Depends(get
 
 
 # ----------------------------------------------------------- notifications --
-LEVEL_ORDER = {"alarm": 0, "beep": 1, "remind": 2}
 NOTIFICATION_KINDS = ("NOTIFIKASI", "PENGINGAT")   # deterioration alerts, cuff reminders
+# Deterioration alerts are a nudge, not a task: they leave the screen on their
+# own. A cuff reminder stays until the crew starts the cuff or enters a reading.
+ALERT_SHOW_S = {"alarm": 60, "beep": 30}
 
 
 def _serialize_notification(event: PatientEvent, patient: Patient) -> dict:
@@ -320,18 +331,27 @@ def _serialize_notification(event: PatientEvent, patient: Patient) -> dict:
 
 @app.get("/api/notifications")
 def pending_notifications(db: Session = Depends(get_db)):
-    """Deterioration alerts for the active patient that nobody has acknowledged yet."""
+    """Notifications to show for the active patient, newest first."""
     patient = active_patient(db)
-    if patient is None:
-        return {"items": []}
+    if patient is None or monitor.paused_since(patient.id) is not None:
+        return {"items": []}   # none while the handover page is open
     events = db.scalars(
         select(PatientEvent)
         .where(PatientEvent.patient_id == patient.id, PatientEvent.kind.in_(NOTIFICATION_KINDS))
         .order_by(PatientEvent.created_at)
     ).all()
-    pending = [e for e in events if not (e.data or {}).get("ack_at")]
-    # Alarms (MERAH) first, then the oldest unanswered
-    pending.sort(key=lambda e: (LEVEL_ORDER.get((e.data or {}).get("level"), 9), e.created_at))
+    now = utcnow()
+
+    def showing(event: PatientEvent) -> bool:
+        data = event.data or {}
+        if data.get("ack_at"):
+            return False
+        limit = ALERT_SHOW_S.get(data.get("level")) if event.kind == "NOTIFIKASI" else None
+        return limit is None or (now - event.created_at).total_seconds() < limit
+
+    # Newest first; a waiting cuff reminder goes under any alert, which leaves on its own
+    pending = sorted((e for e in events if showing(e)), key=lambda e: e.created_at, reverse=True)
+    pending.sort(key=lambda e: e.kind == "PENGINGAT")
     return {"items": [_serialize_notification(e, patient) for e in pending]}
 
 
@@ -392,7 +412,7 @@ def handover(patient_id: str, db: Session = Depends(get_db)):
 @app.get("/api/patients/{patient_id}/handover.pdf")
 def handover_pdf(patient_id: str, db: Session = Depends(get_db)):
     patient = _get_patient(db, patient_id)
-    detail = patient_detail(db, patient)
+    detail = _detail(db, patient)
     # Simulated or not is a property of this patient's data, not of today's mode
     simulated = any("MOCK" in (r.get("sources") or {}).values() for r in detail["timeline"])
     pdf = build_handover_pdf(detail, patient.ambulance_id or settings.AMBULANCE_ID, bp_estimator.label(),
@@ -422,7 +442,7 @@ def print_label(patient_id: str, db: Session = Depends(get_db)):
     if patient.status == "ACTIVE":
         monitor.tick(force_snapshot=True)  # label carries the newest values, not ones up to 10 s old
     try:
-        message = label_printer.print_label(patient_detail(db, patient))
+        message = label_printer.print_label(_detail(db, patient))
     except PrinterError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
     db.add(PatientEvent(patient_id=patient.id, kind="CETAK", detail="Label serah terima dicetak"))
@@ -433,7 +453,7 @@ def print_label(patient_id: str, db: Session = Depends(get_db)):
 @app.get("/api/patients/{patient_id}/label.png")
 def label_preview(patient_id: str, db: Session = Depends(get_db)):
     patient = _get_patient(db, patient_id)
-    return Response(label_printer.render_png(patient_detail(db, patient)), media_type="image/png",
+    return Response(label_printer.render_png(_detail(db, patient)), media_type="image/png",
                     headers={"Cache-Control": "no-store"})
 
 
@@ -441,7 +461,7 @@ def label_preview(patient_id: str, db: Session = Depends(get_db)):
 def label_qr_info(patient_id: str, db: Session = Depends(get_db)):
     """The viewer link the label QR carries, for the preview drawer."""
     patient = _get_patient(db, patient_id)
-    info = qr_info(label_qr(patient_detail(db, patient), label_printer.cfg))
+    info = qr_info(label_qr(_detail(db, patient), label_printer.cfg))
     if info is None:
         raise HTTPException(status_code=503, detail="QR tidak dapat dibuat untuk data ini. Label tetap bisa dicetak tanpa QR.")
     return info

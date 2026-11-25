@@ -40,6 +40,7 @@ def client(app_module):
         db.close()
         app_module.monitor.patient_id = None
         app_module.monitor.latest = None
+        app_module.monitor.paused_at = None
         app_module.monitor.clock = __import__("time").time
         app_module.sensor_manager.mode = "SERIAL"
         app_module.sensor_manager.scenario = "stable"

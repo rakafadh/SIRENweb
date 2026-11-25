@@ -240,8 +240,9 @@ SIREN_QR_INCLUDE_NAME=true   # false = nama hanya di kertas
 | Melihat log | `journalctl -u siren -f` |
 | Mode simulasi untuk demo | Menu **Perangkat** → **Simulasi** (hanya saat tidak ada pasien aktif). Kembalikan ke **Sensor sungguhan** sebelum dipakai di ambulans. |
 | Daftar pintasan keyboard | Tekan `?` di layar mana pun |
-| Notifikasi pasien memburuk | Banner kuning (NEWS2 naik ≥3, bunyi sekali) atau merah (menjadi MERAH, alarm berulang). Tekan **Saya mengerti** atau `K`. Bila tertulis "bunyi belum aktif", sentuh layar sekali. |
-| Pengingat ukur TD manset | Banner biru saat waktunya kalibrasi (tiap 10 menit, tiap 5 menit bila NEWS2 ≥ 5, atau lebih cepat bila TD berubah tajam). Tekan **Mulai ukur manset**, isi TD, lalu **Simpan**. **Nanti** menunda; pengingat muncul lagi bila terlambat. |
+| Notifikasi pasien memburuk | Kartu kecil di kiri atas: kuning (NEWS2 naik ≥3, bunyi sekali, tampil 30 detik) atau merah (menjadi MERAH, alarm 3 kali, tampil 1 menit). Tanpa tombol; hilang sendiri, atau sentuh kartunya / tekan `K` untuk menutup lebih cepat. Notifikasi baru muncul paling atas, yang lama turun sedikit di belakangnya. Bila tertulis "Bunyi mati", sentuh layar sekali. |
+| Pengingat ukur TD manset | Kartu biru di kiri atas saat waktunya kalibrasi (tiap 10 menit, tiap 5 menit bila NEWS2 ≥ 5, atau lebih cepat bila TD berubah tajam). Kartu tetap ada sampai **Ukur** ditekan: isi TD, lalu **Simpan**. Bila belum juga diukur, pengingat berganti menjadi "Ukur TD manset sekarang". |
+| Halaman Serah terima | Begitu dibuka, pemantauan berhenti: ringkasan memakai data saat tiba, dan tidak ada notifikasi atau pengingat. Kembali ke **Pemantauan** bila pasien belum jadi diserahkan; pemantauan berjalan lagi. |
 | PDF serah terima | Tersimpan di `~/Downloads`; salin ke flashdisk bila perlu |
 | Data mentah | Menu **Riwayat** → ekspor CSV |
 | Cadangan data | Saat server mati, salin `siren.db` dan `siren.db-wal` |
@@ -361,12 +362,12 @@ Lakukan di Orange Pi yang sudah terpasang di ambulans, dengan kedua ESP32 dan pr
 
 | No | Uji | Hasil yang diharapkan | ✓ |
 |---|---|---|---|
-| 32 | Mode **Simulasi** skenario *Pasien memburuk*, mulai pasien baru, tunggu | Saat NEWS2 naik ≥3: banner **kuning** "NEWS2 naik … poin" dengan **bunyi sekali**; tetap tampil sampai **Saya mengerti** ditekan | ☐ |
-| 33 | Lanjutkan sampai kategori menjadi **MERAH** | Banner **merah** "Pasien memburuk: kategori MERAH" dengan **alarm berulang**; berhenti setelah **Saya mengerti** atau tombol `K` | ☐ |
-| 34 | Buka halaman lain (Perangkat, Riwayat) saat ada notifikasi | Banner tetap muncul di halaman mana pun | ☐ |
+| 32 | Mode **Simulasi** skenario *Pasien memburuk*, mulai pasien baru, tunggu | Saat NEWS2 naik ≥3: kartu **kuning** kecil di kiri atas "NEWS2 naik … poin" dengan **bunyi sekali**, tanpa tombol; hilang sendiri setelah ±30 detik | ☐ |
+| 33 | Lanjutkan sampai kategori menjadi **MERAH** | Kartu **merah** "Pasien memburuk: kategori MERAH" dengan **alarm 3 kali**; kartu sebelumnya turun sedikit di belakangnya; hilang sendiri setelah ±1 menit atau saat disentuh / tombol `K` | ☐ |
+| 34 | Buka halaman lain (Perangkat, Riwayat) saat ada notifikasi; lalu buka **Serah terima** | Kartu tetap muncul di Perangkat dan Riwayat; di Serah terima tidak ada notifikasi sama sekali | ☐ |
 | 35 | Centang *oksigen tambahan* pada pasien stabil | Tidak ada notifikasi (memberi oksigen bukan perburukan) | ☐ |
 | 36 | Bunyi di kabin ambulans dengan volume normal | Alarm terdengar jelas dari bangku petugas | ☐ |
-| 37 | Buka serah terima → *Catatan & tindakan* | Setiap notifikasi tercatat beserta jam konfirmasinya; juga ada di PDF | ☐ |
+| 37 | Buka serah terima → *Catatan & tindakan* | Setiap notifikasi tercatat (beserta jam bila ditutup petugas); juga ada di PDF | ☐ |
 
 **Hasil UAT:** ☐ Lulus semua  ☐ Lulus dengan catatan  ☐ Belum lulus
 

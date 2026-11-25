@@ -750,30 +750,46 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
 .shortcut-list dt { text-align: right; }
 .shortcut-list dd { margin: 0; color: var(--text-2); }
 
-/* ------------------------------------------- deterioration alert banner */
-.alert-banner {
-  position: sticky; top: var(--appbar-h); z-index: calc(var(--z-banner) + 1);
-  display: flex; align-items: center; gap: 14px;
-  margin: 8px 12px 0; padding: 12px 14px 12px 16px; border-radius: var(--r-lg);
-  background: var(--amber); color: var(--amber-ink);
-  box-shadow: var(--shadow-pop);
-  animation: toast-in 260ms var(--spring);
+/* ------------------------------------------------- notification stack */
+/* Top left, under the app bar. Newest card on top; older ones sit a little
+   lower behind it, so the stack stays small whatever is waiting. */
+.alert-stack {
+  position: fixed; top: calc(var(--appbar-h) + 8px); left: 12px; z-index: calc(var(--z-banner) + 1);
+  width: 348px; height: 0; pointer-events: none;
 }
-.alert-banner.alarm { background: var(--red); color: var(--red-ink); animation: alert-pulse 1.2s ease-in-out infinite; }
-/* Cuff reminder: a task, not an emergency */
-.alert-banner.remind { background: var(--accent); color: var(--accent-ink); }
-.alert-banner.remind .alert-ack:not(.alert-action) { background: transparent; color: inherit; box-shadow: inset 0 0 0 1.5px currentColor; }
-.alert-banner.remind .alert-ack:not(.alert-action) kbd { color: inherit; border-color: currentColor; }
-.alert-action.hidden { display: none; }
-.alert-icon .icon svg { width: 30px; height: 30px; }
-.alert-body { flex: 1; min-width: 0; }
-.alert-title { display: block; font-size: 1.15rem; font-weight: 800; line-height: 1.25; }
-.alert-message { font-size: 0.92rem; margin-top: 2px; }
-.alert-meta { font-size: 0.76rem; opacity: 0.85; margin-top: 4px; }
-.alert-ack { flex: none; height: 44px; padding: 0 18px; font-weight: 700; background: #ffffff; color: #111111; border-radius: var(--r); }
-.alert-ack:hover { background: #f1f1f1; }
-.alert-ack kbd { color: #333333; border-color: #bbbbbb; opacity: 1; }
-@keyframes alert-pulse { 50% { box-shadow: 0 0 0 5px rgba(214, 60, 53, 0.25), var(--shadow-pop); } }
+.alert-card {
+  position: absolute; top: 0; left: 0; right: 0; height: 70px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px 8px 12px; border-radius: var(--r-lg);
+  background: var(--amber); color: var(--amber-ink);
+  box-shadow: var(--shadow-pop); pointer-events: auto; cursor: pointer;
+  transform-origin: top center;
+  transition: transform 260ms var(--spring), opacity 220ms ease;
+}
+.alert-card.alarm { background: var(--red); color: var(--red-ink); }
+.alert-card.remind { background: var(--accent); color: var(--accent-ink); cursor: default; }
+.alert-card.entering { opacity: 0; transform: translateY(-14px) scale(0.98) !important; }
+.alert-card.leaving { opacity: 0 !important; transform: translateX(-24px) !important; pointer-events: none; }
+.alert-card.behind { pointer-events: none; }
+.alert-card.behind > * { visibility: hidden; }   /* only the edge of an older card shows */
+.alert-card > .icon svg { width: 22px; height: 22px; }
+.alert-card-body { flex: 1; min-width: 0; }
+.alert-card-head { display: flex; align-items: baseline; gap: 8px; }
+.alert-card-title { flex: 1; min-width: 0; font-size: 0.9rem; font-weight: 800; line-height: 1.2;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.alert-card-time { flex: none; font-size: 0.72rem; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.alert-card-msg { margin-top: 2px; font-size: 0.78rem; line-height: 1.3; opacity: 0.95;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.alert-card-btn { flex: none; height: 36px; padding: 0 14px; border: 0; border-radius: var(--r);
+  background: #ffffff; color: #111111; font: inherit; font-weight: 800; cursor: pointer; }
+.alert-card-btn:hover { background: #f1f1f1; }
+.alert-card.alarm:not(.behind) { animation: alert-pulse 1.2s ease-in-out 4; }
+.alert-stack.muted::after {
+  content: 'Bunyi mati · sentuh layar sekali'; position: absolute; top: 8px; left: calc(100% + 8px);
+  padding: 3px 8px; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow-pop);
+  font-size: 0.7rem; font-weight: 600; color: var(--text-2); white-space: nowrap;
+}
+@keyframes alert-pulse { 50% { box-shadow: 0 0 0 5px rgba(214, 60, 53, 0.3), var(--shadow-pop); } }
 
 /* ------------------------------------------------------------ responsive */
 @media (max-width: 900px) {
