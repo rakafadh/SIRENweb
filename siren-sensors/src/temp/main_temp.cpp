@@ -1,6 +1,8 @@
 /*
  * SIREN - temperature node
  * MLX90614 alone on its own ESP32, broadcasting over ESP-NOW.
+ * The MPU6050 moved to the PPG board; the motion fields of the packet and of
+ * the T line are kept for compatibility and always sent as nan.
  *
  * Build with the `temp` environment and flash to the board that carries the
  * MLX90614. It samples faster than the old combined firmware did, because it
@@ -19,7 +21,6 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "mlx90614.h"
-#include "mpu6050.h"
 #include "filters.h"
 #include "siren_link.h"
 
@@ -39,7 +40,6 @@ static const uint8_t  PIN_SCL = SIREN_SCL;
 static const uint32_t I2C_HZ  = 100000UL;
 
 static const uint32_t SAMPLE_INTERVAL_MS = 200;    // 5 Hz MLX sampling
-static const uint32_t IMU_INTERVAL_MS    = 20;     // 50 Hz IMU sampling
 static const uint32_t SEND_INTERVAL_MS   = 1000;   // 1 Hz on the air
 static const uint32_t PRINT_INTERVAL_MS  = 2000;   // local console only
 
@@ -74,15 +74,12 @@ static const float TEMP_C = 1.2000f;
 
 // --------------------------------------------------------------- globals ----
 Mlx90614 mlx;
-Mpu6050  imu;
 TempFilter objFilter, ambFilter;
 
 bool  mlxReady = false;
-bool  imuReady = false;
 float tempObject = NAN, tempAmbient = NAN, tempCore = NAN, tempRaw = NAN;
-MotionStats motion;
 
-uint32_t lastSample = 0, lastImu = 0, lastSend = 0, lastPrint = 0;
+uint32_t lastSample = 0, lastSend = 0, lastPrint = 0;
 uint32_t sentOk = 0, sentFail = 0;
 
 // ----------------------------------------------------------------- setup ----
@@ -105,14 +102,6 @@ void setup() {
         Serial.println(mlx.readEmissivity(), 3);
         Serial.printf("First reading: Tobj=%.2fC Tamb=%.2fC\n",
                       mlx.readObjectC(), mlx.readAmbientC());
-    }
-
-    imuReady = imu.begin(&Wire, MPU_ADDR_DEFAULT);
-    if (!imuReady) {
-        Serial.println(F("WARNING: MPU6050 did not respond at 0x68."));
-        Serial.println(F("Motion data will be unavailable."));
-    } else {
-        Serial.println(F("MPU6050 ready. +/-4 g, +/-500 deg/s, 44 Hz filter."));
     }
 
     // 3 s smoothing. The reject gate is wide on purpose, see filters.h.
@@ -141,32 +130,21 @@ void loop() {
         tempCore    = TEMP_A * tempObject + TEMP_B * tempAmbient + TEMP_C;
     }
 
-    // --- IMU, sampled far faster than it is sent ---
-    // Vibration is a statistic over a window, not an instantaneous value, so
-    // the useful thing is many samples summarised once per packet.
-    if (imuReady && (now - lastImu >= IMU_INTERVAL_MS)) {
-        lastImu = now;
-        imu.update();
-    }
-
     // --- transmit ---
     if (now - lastSend >= SEND_INTERVAL_MS) {
         lastSend = now;
-
-        if (imuReady) motion = imu.takeWindow();
 
         TempPacket pkt = {};
         pkt.tempObject  = tempObject;
         pkt.tempAmbient = tempAmbient;
         pkt.tempCore    = tempCore;
         pkt.tempRaw     = tempRaw;
-        pkt.accelRms    = imuReady ? motion.accelRms  : NAN;
-        pkt.accelPeak   = imuReady ? motion.accelPeak : NAN;
-        pkt.gyroRms     = imuReady ? motion.gyroRms   : NAN;
+        pkt.accelRms    = NAN;          // motion is measured on the PPG board
+        pkt.accelPeak   = NAN;
+        pkt.gyroRms     = NAN;
         pkt.flags       = 0;
         if (mlxReady)            pkt.flags |= TFLAG_SENSOR_OK;
         if (objFilter.settled()) pkt.flags |= TFLAG_SETTLED;
-        if (imuReady)            pkt.flags |= TFLAG_IMU_OK;
 
         if (sirenSendTemp(pkt)) sentOk++;
         else                    sentFail++;
@@ -185,16 +163,9 @@ void loop() {
         lastPrint = now;
         Serial.printf("t=%6.1fs  Tcore=%.2fC(raw %.2f)  Tamb=%.2fC  ",
                       now / 1000.0f, tempCore, tempRaw, tempAmbient);
-        if (imuReady) {
-            Serial.printf("accel=%.3fg peak=%.3fg gyro=%.1fdps  ",
-                          motion.accelRms, motion.accelPeak, motion.gyroRms);
-        } else {
-            Serial.print(F("motion=--  "));
-        }
         Serial.printf("sent=%lu fail=%lu", sentOk, sentFail);
         if (!mlxReady)                 Serial.print(F("  [no temp sensor]"));
         else if (!objFilter.settled()) Serial.print(F("  [settling]"));
-        if (!imuReady)                 Serial.print(F("  [no imu]"));
         Serial.println();
     }
 #endif

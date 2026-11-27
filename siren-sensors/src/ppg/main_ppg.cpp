@@ -1,11 +1,17 @@
 /*
  * SIREN - PPG node
- * MAX30102 only (heart rate, SpO2, respiration), plus temperature received
- * over ESP-NOW from the separate temperature node.
+ * MAX30102 (heart rate, SpO2, respiration) and MPU6050 (vehicle vibration),
+ * plus temperature received over ESP-NOW from the separate temperature node.
  *
  * Build with the `ppg` environment and flash to the board that carries the
- * MAX30102. The MLX90614 now lives on its own board running the `temp`
- * environment.
+ * MAX30102 and the MPU6050. The MLX90614 lives on its own board running the
+ * `temp` environment.
+ *
+ * The MPU6050 sits on this board because vibration matters where the finger
+ * sensor is: it masks HR and RR, and blocks BP calibration while moving.
+ * By default it shares this board's I2C bus with the MAX30102 (0x68 vs
+ * 0x57). If it is wired to its own pins, set SIREN_MPU_SDA and
+ * SIREN_MPU_SCL in platformio.ini and it runs on the second I2C port.
  *
  * This board is the aggregator, so one serial console still shows every
  * vital. Temperature arriving over the air is treated as stale after
@@ -34,6 +40,7 @@
 #include "respiration.h"
 #include "max_diagnostics.h"
 #include "filters.h"
+#include "mpu6050.h"
 #include "siren_link.h"
 
 // ---------------------------------------------------------------- config ----
@@ -50,6 +57,17 @@
 static const uint8_t  PIN_SDA = SIREN_SDA;
 static const uint8_t  PIN_SCL = SIREN_SCL;
 static const uint32_t I2C_HZ  = 100000UL;
+
+// MPU6050. Same bus as the MAX30102 unless its own pins are given.
+#ifndef SIREN_MPU_ADDR
+#define SIREN_MPU_ADDR 0x68          // 0x69 if AD0 is pulled high
+#endif
+#if defined(SIREN_MPU_SDA) && defined(SIREN_MPU_SCL)
+#define MPU_OWN_BUS 1
+#else
+#define MPU_OWN_BUS 0
+#endif
+static const uint32_t IMU_INTERVAL_MS = 20;      // 50 Hz, summarised once per block
 
 static const int32_t  BUFFER_LENGTH   = 100;
 static const int32_t  REFRESH_SAMPLES = 25;
@@ -109,10 +127,17 @@ bool    gainChanged = false;
 
 float fsMeasured = FS_NOMINAL;
 
-// Temperature and motion, as last received over the air
+// Temperature, as last received over the air
 float    tempObject = NAN, tempAmbient = NAN, tempCore = NAN;
 float    tempObjectRaw = NAN;
+
+// Motion from this board's MPU6050. A temperature node still running the
+// old firmware may also send motion; it is used only if no local IMU answers.
+Mpu6050  imu;
+bool     imuReady = false;
+uint32_t imuLastMs = 0;
 float    accelRms = NAN, accelPeak = NAN, gyroRms = NAN;
+float    airAccelRms = NAN, airAccelPeak = NAN, airGyroRms = NAN;
 uint32_t tempLastRxMs = 0;
 bool     tempEverSeen = false;
 uint8_t  tempFlags = 0;
@@ -207,11 +232,23 @@ static void fifoFill() {
     }
 }
 
+// One IMU sample every IMU_INTERVAL_MS. Called while waiting for PPG
+// samples, so it costs no extra time in the loop.
+static void imuPoll() {
+    if (!imuReady) return;
+    uint32_t now = millis();
+    if (now - imuLastMs < IMU_INTERVAL_MS) return;
+    imuLastMs = now;
+    imu.update();
+}
+
 static void readOneSample(uint32_t &red, uint32_t &ir) {
     while (qCount == 0) {
         fifoFill();
+        imuPoll();
         if (qCount == 0) delay(2);
     }
+    imuPoll();
     uint32_t rawRed = qRed[qHead];
     uint32_t rawIr  = qIr[qHead];
     uint32_t now    = qMs[qHead];
@@ -364,6 +401,20 @@ void setup() {
     Serial.println(F("MAX30102 ready."));
     dumpMaxConfig();
 
+#if MPU_OWN_BUS
+    Wire1.begin(SIREN_MPU_SDA, SIREN_MPU_SCL, I2C_HZ);
+    imuReady = imu.begin(&Wire1, SIREN_MPU_ADDR);
+    Serial.printf("MPU6050 on its own bus, SDA=GPIO%u SCL=GPIO%u\n", SIREN_MPU_SDA, SIREN_MPU_SCL);
+#else
+    imuReady = imu.begin(&Wire, SIREN_MPU_ADDR);
+#endif
+    if (imuReady) {
+        Serial.println(F("MPU6050 ready. +/-4 g, +/-500 deg/s, 44 Hz filter."));
+    } else {
+        Serial.printf("WARNING: MPU6050 did not respond at 0x%02X. Motion data will be unavailable.\n",
+                      SIREN_MPU_ADDR);
+    }
+
     // TEMP DIAGNOSTIC: measure the sensor's true output rate. The FIFO is
     // emptied, nothing reads it for one second, then the write pointer shows
     // how many samples the chip produced. Remove once the rate is known.
@@ -506,16 +557,30 @@ void loop() {
         tempAmbient   = tpkt.tempAmbient;
         tempCore      = tpkt.tempCore;
         tempObjectRaw = tpkt.tempRaw;
-        accelRms      = tpkt.accelRms;
-        accelPeak     = tpkt.accelPeak;
-        gyroRms       = tpkt.gyroRms;
+        airAccelRms   = tpkt.accelRms;
+        airAccelPeak  = tpkt.accelPeak;
+        airGyroRms    = tpkt.gyroRms;
         tempFlags     = tpkt.flags;
         tempLastRxMs  = millis();
         tempEverSeen  = true;
     }
     const bool tempFresh = tempEverSeen && (millis() - tempLastRxMs) < TEMP_STALE_MS;
     const bool tempOk    = tempFresh && (tempFlags & TFLAG_SENSOR_OK);
-    const bool imuOk     = tempFresh && (tempFlags & TFLAG_IMU_OK);
+
+    // --- motion: this block's window from the local IMU ---
+    bool imuOk = false;
+    if (imuReady) {
+        MotionStats m = imu.takeWindow();
+        imuOk = m.samples > 0;
+        accelRms  = m.accelRms;
+        accelPeak = m.accelPeak;
+        gyroRms   = m.gyroRms;
+    } else if (tempFresh && (tempFlags & TFLAG_IMU_OK)) {
+        imuOk = true;                       // old temperature firmware with its own MPU
+        accelRms  = airAccelRms;
+        accelPeak = airAccelPeak;
+        gyroRms   = airGyroRms;
+    }
 
 #if CSV_OUTPUT
     Serial.printf("%lu,%.1f,%u,%lu,%.3f,%.2f,%.1f,%c,%.1f,%u,%ld,%.1f,%.1f,%.1f,%.1f,%.1f,%lu,%.2f,%.2f,%.2f,%.4f,%.4f,%.2f\n",

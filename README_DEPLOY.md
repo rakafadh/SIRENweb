@@ -64,8 +64,10 @@ Firmware cukup ditanam **sekali** dari laptop. Setelah itu ESP32 menjalankannya 
 
 | Board | Sensor | Environment PlatformIO | Pin I²C |
 |---|---|---|---|
-| ESP32 DevKit (klasik) | MAX30102 | `ppg` | SDA 26 · SCL 14 |
-| ESP32-S3 | MLX90614 + MPU6050 | `temp` | SDA 4 · SCL 5 |
+| ESP32 DevKit (klasik) | MAX30102 + MPU6050 | `ppg` | SDA 26 · SCL 14 (dipakai bersama) |
+| ESP32-S3 | MLX90614 | `temp` | SDA 4 · SCL 5 |
+
+MPU6050 (sensor getaran) ada di board PPG, satu jalur I²C dengan MAX30102. Bila suatu saat disambung ke pin lain, tambahkan `-D SIREN_MPU_SDA=<pin>` dan `-D SIREN_MPU_SCL=<pin>` di bagian `[env:ppg]` pada `platformio.ini`.
 
 1. Di VS Code buka folder **`SIREN\siren-sensors`** (folder yang berisi `platformio.ini`).
 2. Colok **satu board saja**, supaya port tidak tertukar.
@@ -288,6 +290,8 @@ Lakukan saat ada versi baru di branch `main`, dan **tidak ada pasien aktif**.
 7. **Cek setelah reboot:** `systemctl status siren` harus *active (running)*, menu **Perangkat** menunjukkan kedua node *Terhubung*, lalu coba **Cetak uji**.
 
 **Pembaruan model TD terkalibrasi (November 2026):** board PPG perlu di-flash ulang supaya mengirim penanda perubahan intensitas LED, dan paket `scipy` baru terpasang lewat langkah 6. Board suhu tidak perlu di-flash ulang.
+
+**Pemindahan MPU6050 ke board PPG:** **kedua** board perlu di-flash ulang. Board PPG sekarang membaca MPU6050 sendiri, dan board suhu tidak lagi mencarinya. Setelah flash, monitor serial board PPG harus menampilkan `MPU6050 ready.`
 
 ---
 

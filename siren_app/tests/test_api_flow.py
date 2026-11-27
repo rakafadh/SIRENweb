@@ -3,6 +3,8 @@
 import time
 from datetime import datetime
 
+from app.services.sensor_protocol import PPG_FIELDS
+
 PPG_ROW = "{ms},24.8,60,120000,0.010,1.20,{hr},b,30.0,12,{spo2},{rr},15.0,16.0,15.5,0.4,40,nan,nan,nan,nan,nan,nan"
 TEMP_ROW = "T,{ms},35.40,29.50,{temp},35.20,{motion},0.0700,1.90,7"
 
@@ -242,3 +244,13 @@ def test_csv_exports(client, app_module):
     assert readings.headers["content-type"].startswith("text/csv")
     assert len(readings.text.strip().splitlines()) >= 2
     datetime.fromisoformat(readings.text.splitlines()[1].split(",")[1])
+
+
+def test_motion_comes_from_the_ppg_board(client, app_module):
+    """The MPU6050 is on the PPG board; a temperature line without motion is fine."""
+    sm = app_module.sensor_manager
+    feed(app_module, motion=float("nan"))
+    ppg = PPG_ROW.format(ms=2000, hr=80, spo2=97, rr=16).split(",")
+    ppg[PPG_FIELDS.index("accel_rms")] = "0.2100"
+    sm.handle_line("/dev/ttyUSB0", ",".join(ppg))
+    assert sm.readings()["motion_g"] == 0.21

@@ -3,8 +3,8 @@
  *
  * Written directly against the register map, same reasoning as mlx90614.h:
  * the sketch owns Wire setup, and no library gets to re-initialise the bus
- * behind our back. The MPU6050 shares the bus with the MLX90614 at 0x68
- * (0x69 if AD0 is pulled high).
+ * behind our back. The MPU6050 sits on the PPG board and shares its bus with
+ * the MAX30102 at 0x68 (0x69 if AD0 is pulled high).
  *
  * What this measures, and why
  *

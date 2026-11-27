@@ -235,9 +235,11 @@ class SensorManager:
         elif ppg.get("tcore") is not None:
             temp, temp_via = ppg["tcore"], "ESP-NOW"
 
-        motion = temp_usb.get("accel_rms")
+        # The MPU6050 is on the PPG board; a temperature board on older
+        # firmware may still report its own.
+        motion = ppg.get("accel_rms")
         if motion is None:
-            motion = ppg.get("accel_rms")
+            motion = temp_usb.get("accel_rms")
 
         return {
             "hr": ppg.get("hr"),
@@ -424,7 +426,8 @@ class MockFeeder:
             "riav": "nan", "rifv": "nan", "spread": "1.0", "beats": "40",
             # Temperature comes over the temperature board's own USB line below
             "tobj": "nan", "tamb": "nan", "tcore": "nan",
-            "accel_rms": "nan", "accel_peak": "nan", "gyro_rms": "nan",
+            # Vibration comes from the MPU6050 on the PPG board
+            "accel_rms": f"{v['motion']:.4f}", "accel_peak": f"{v['motion'] * 3:.4f}", "gyro_rms": "2.10",
         }
         ppg_line = ",".join(ppg_values[name] for name in PPG_FIELDS)
 
@@ -443,7 +446,7 @@ class MockFeeder:
 
         temp_line = (
             f"T,{self._device_ms},{v['temp'] - 1.2:.2f},29.50,{v['temp']:.2f},{v['temp'] - 1.3:.2f},"
-            f"{v['motion']:.4f},{v['motion'] * 3:.4f},2.10,7"
+            "nan,nan,nan,3"
         )
         return [("MOCK-PPG", ppg_line), ("MOCK-PPG", wave_line), ("MOCK-SUHU", temp_line)]
 
