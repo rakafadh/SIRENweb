@@ -13,6 +13,7 @@ import pytest
 
 from app.services.bp_service import BloodPressureEstimator
 from app.services.monitor import systolic_for_triage
+from app.services.sensor_protocol import PPG_FIELDS
 from app.services.sensor_service import MockFeeder, SensorManager
 
 
@@ -24,9 +25,9 @@ def stream(seconds: int, scenario: str = "stable", manager: SensorManager | None
     feeder = feeder or MockFeeder(manager, scenario=scenario)
     for sec in range(start, start + seconds):
         for port, line in feeder.lines(float(sec)):
-            if motion is not None and line.startswith("T,"):
-                parts = line.split(",")
-                parts[6] = f"{motion:.4f}"
+            if motion is not None and port == "MOCK-PPG" and line[0].isdigit():
+                parts = line.split(",")          # the MPU6050 is on the PPG board
+                parts[PPG_FIELDS.index("accel_rms")] = f"{motion:.4f}"
                 line = ",".join(parts)
             if not finger and port == "MOCK-PPG" and line[0].isdigit():
                 line = line.replace(",120000,", ",900,", 1)   # IR DC this low = no finger

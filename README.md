@@ -19,8 +19,8 @@ SIREN/
 │   ├── deploy/               skrip instal Orange Pi (systemd, kiosk, udev)
 │   └── tests/                test otomatis
 ├── siren-sensors/            firmware ESP32 (PlatformIO)
-│   ├── src/ppg/              node PPG: MAX30102
-│   ├── src/temp/             node suhu: MLX90614 + MPU6050
+│   ├── src/ppg/              node PPG: MAX30102 + MPU6050 (getaran)
+│   ├── src/temp/             node suhu: MLX90614
 │   └── tools/                triage.py (algoritma rujukan laporan) dan dashboard uji hardware
 ├── siren-bp-model-test/      sumber model tekanan darah yang dipakai: pelatihan, evaluasi, uji live
 └── BloodPressure-Model/      model tekanan darah versi lama, tidak dipakai aplikasi lagi

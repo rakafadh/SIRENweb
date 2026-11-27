@@ -53,9 +53,9 @@ struct TempPacket {
     float    tempAmbient;   // filtered ambient (sensor die), C
     float    tempCore;      // after the calibration model, C
     float    tempRaw;       // unfiltered object reading, C
-    float    accelRms;      // g, gravity removed, RMS over the send window
-    float    accelPeak;     // g, largest single deviation in the window
-    float    gyroRms;       // deg/s, RMS magnitude over the window
+    float    accelRms;      // g, RMS over the send window. Always nan now:
+    float    accelPeak;     // the MPU6050 moved to the PPG board. Kept so the
+    float    gyroRms;       // packet layout, and old firmware, still match.
     uint8_t  flags;         // TFLAG_*
     uint8_t  checksum;      // additive over all preceding bytes
 };
