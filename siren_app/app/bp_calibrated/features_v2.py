@@ -117,7 +117,7 @@ def _beat_shape(seg: np.ndarray, pk: int) -> list[float] | None:
 
     w = yn / max(yn.sum(), 1e-9)
     mu = (w * tf).sum()
-    sd = np.sqrt((w * (tf - mu) ** 2).sum())
+    sd = float(np.sqrt(max(float((w * (tf - mu) ** 2).sum()), 0.0)))  # clip rounding below zero (noisy beats)
     skew = (w * ((tf - mu) / sd) ** 3).sum() if sd > 0 else np.nan
     kurt = (w * ((tf - mu) / sd) ** 4).sum() if sd > 0 else np.nan
 

@@ -83,6 +83,19 @@ static const float    PI_MIN         = 0.15f;    // below this the pulse is too 
 static const uint8_t  LED_MIN = 0x08;
 static const uint8_t  LED_MAX = 0xC0;
 
+// Gain lock. Every LED change puts a step in the raw IR, and the BP model
+// cannot use a 30 s window that contains one. Motion also moves the DC level,
+// which used to make the automatic gain chase it. So once the DC has stayed
+// inside the target band for GAIN_LOCK_BLOCKS blocks in a row (1 block = 1 s),
+// the LED current is frozen. It is released only when the signal clips for
+// GAIN_UNLOCK_SAT_BLOCKS blocks, stays out of the band for
+// GAIN_UNLOCK_OUT_BLOCKS blocks (the finger really moved), or the finger is
+// lifted. Lock and release are printed as plain lines ("AGC locked ...").
+#define GAIN_LOCK 1
+static const uint8_t  GAIN_LOCK_BLOCKS       = 3;
+static const uint8_t  GAIN_UNLOCK_SAT_BLOCKS = 2;
+static const uint8_t  GAIN_UNLOCK_OUT_BLOCKS = 8;
+
 static const uint32_t RESP_COMPUTE_MS = 1000;    // recompute RR once per second
 static const float    RESP_BLOCK_DRIFT_MAX = 0.08f; // DC change within one block = artefact
 
@@ -124,6 +137,7 @@ int32_t heartRate = 0;  int8_t hrValid   = 0;
 
 uint8_t ledPower = 0x3C;        // about 12 mA to start
 bool    gainChanged = false;
+bool    gainLocked  = false;
 
 float fsMeasured = FS_NOMINAL;
 
@@ -291,7 +305,34 @@ static void resetRespiration() {
 
 static void adjustGain(uint32_t irDc) {
     gainChanged = false;
+#if GAIN_LOCK
+    static uint8_t inBandBlocks = 0, satBlocks = 0, outBlocks = 0;
+    if (irDc < FINGER_IR_MIN) {                       // finger lifted: start again on the next finger
+        if (gainLocked) Serial.println(F("AGC unlocked (finger lifted)"));
+        gainLocked = false;
+        inBandBlocks = satBlocks = outBlocks = 0;
+        return;
+    }
+    const bool inBand = irDc >= IR_TARGET_LOW && irDc <= IR_TARGET_HIGH;
+    if (gainLocked) {
+        satBlocks = (irDc > IR_SATURATED) ? satBlocks + 1 : 0;
+        outBlocks = inBand ? 0 : outBlocks + 1;
+        if (satBlocks < GAIN_UNLOCK_SAT_BLOCKS && outBlocks < GAIN_UNLOCK_OUT_BLOCKS) return;
+        Serial.printf("AGC unlocked (%s), adjusting\n", satBlocks >= GAIN_UNLOCK_SAT_BLOCKS ? "clipping" : "out of range");
+        gainLocked = false;
+        inBandBlocks = satBlocks = outBlocks = 0;
+    } else {
+        inBandBlocks = inBand ? inBandBlocks + 1 : 0;
+        if (inBandBlocks >= GAIN_LOCK_BLOCKS) {
+            gainLocked = true;
+            satBlocks = outBlocks = 0;
+            Serial.printf("AGC locked at LED %u (IR DC %lu)\n", ledPower, (unsigned long)irDc);
+            return;
+        }
+    }
+#else
     if (irDc < FINGER_IR_MIN) return;
+#endif
 
     // Proportional step towards the middle of the target band, so the gain
     // settles in a few blocks instead of many small steps. irDc here is the
@@ -640,6 +681,7 @@ void loop() {
     else if (saturated)     Serial.print(F("  [saturated]"));
     else if (weakPulse)     Serial.print(F("  [weak pulse]"));
     else if (gainChanged)   Serial.print(F("  [gain settling]"));
+    else if (gainLocked)    Serial.print(F("  [gain locked]"));
     Serial.println();
 #endif
 
