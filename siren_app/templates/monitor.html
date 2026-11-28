@@ -36,7 +36,7 @@
       <div class="vitals">
         {% for key, name, unit in [('hr', 'Nadi', '/mnt'), ('spo2', 'SpO<sub>2</sub>', '%'), ('rr', 'Laju napas', '/mnt'), ('temp', 'Suhu', '°C')] %}
         <article class="vital is-missing" data-vital="{{ key }}">
-          <div class="vital-head"><span class="vital-name">{{ name|safe }}</span><span class="src"></span></div>
+          <div class="vital-head"><span class="vital-name">{{ name|safe }}</span><span class="src"></span>{% if key == 'rr' %}<button type="button" class="vital-fill" data-fill="rr" hidden>Isi manual</button>{% endif %}</div>
           <div class="vital-value"><strong>—</strong><span class="unit">{{ unit }}</span></div>
           <div class="vital-note"></div>
         </article>
@@ -131,7 +131,7 @@
 <aside class="drawer" id="drawerManual" aria-hidden="true" aria-labelledby="manualTitle" role="dialog">
   <div class="drawer-head"><h2 id="manualTitle">Tanda vital manual</h2><button type="button" class="btn btn-ghost btn-sm" data-close-drawer>Tutup <kbd>Esc</kbd></button></div>
   <form id="manualForm" class="drawer-body stack" novalidate>
-    <p class="muted">Dipakai hanya bila sensor tidak memberi nilai untuk parameter itu, dan berlaku 15 menit sejak diisi. Isi yang perlu saja.</p>
+    <p class="muted">Dipakai hanya bila sensor tidak memberi nilai untuk parameter itu. Laju napas manual bertahan sampai sensor valid lagi; nilai lain berlaku 15 menit sejak diisi.</p>
     <div class="field-row">
       <label class="field"><span>Nadi</span><span class="with-unit"><input name="hr" type="number" step="1" min="20" max="250" data-unit="/mnt" /><span class="unit">/mnt</span></span><span class="field-error"></span></label>
       <label class="field"><span>SpO₂</span><span class="with-unit"><input name="spo2" type="number" step="1" min="50" max="100" data-unit="%" /><span class="unit">%</span></span><span class="field-error"></span></label>
@@ -283,8 +283,12 @@
 
         let note = '';
         const excused = data.readiness && data.readiness.items.find((i) => i.param === key && i.state === 'excused');
+        const fill = tile.querySelector('.vital-fill');
+        if (fill) fill.hidden = !(v.value === null && !excused);
         if (v.value === null && excused) note = `Tidak dapat diukur: ${excused.reason}`;
+        else if (v.value === null && key === 'rr' && data.sensors.ppg.status === 'CONNECTED' && data.finger !== false) note = 'Sensor belum valid. Hitung napas 1 menit, lalu isi manual.';
         else if (v.value === null) note = `${sensorNote(key, data)} · tekan M untuk isi manual`;
+        else if (v.source === 'MANUAL' && v.until_sensor) note = `Manual, ${Math.max(1, Math.round(v.age_s / 60))} mnt lalu · dipakai sampai sensor valid`;
         else if (v.flags.length) note = `Perlu dicek: ${v.flags.join(', ')}`;
         else if (v.source === 'MANUAL') note = `Diisi ${Math.max(1, Math.round(v.age_s / 60))} mnt lalu`;
         else if (key === 'temp' && v.via) note = v.via === 'USB' ? 'Dari node suhu' : 'Lewat node PPG (ESP-NOW)';
@@ -448,6 +452,8 @@
       return result;
     }
 
+    document.querySelectorAll('.vital-fill').forEach((b) => b.addEventListener('click', () => openManual(b.dataset.fill)));
+
     function openManual(param) {
       S.openDrawer('drawerManual');
       setTimeout(() => manualForm.elements[param]?.focus(), 120);
@@ -603,7 +609,7 @@
         el('span', { text: `${MANUAL_LABEL[key][0]} ${num(m.value, MANUAL_LABEL[key][2])} ${MANUAL_LABEL[key][1]}` }),
         el('span', {
           class: 'faint',
-          text: `${Math.max(1, Math.round(m.age_s / 60))} mnt lalu${live.vitals[key].source === 'MANUAL' ? '' : ' · tidak dipakai, sensor aktif'}`,
+          text: `${Math.max(1, Math.round(m.age_s / 60))} mnt lalu${live.vitals[key].source === 'MANUAL' ? (live.vitals[key].until_sensor ? ' · sampai sensor valid' : '') : ' · tidak dipakai, sensor aktif'}`,
         }),
         el('button', { type: 'button', class: 'btn btn-sm btn-ghost', text: 'Hapus', onclick: () => saveManual({ [key]: null }, `${MANUAL_LABEL[key][0]} manual dihapus.`) }),
       ])) : [el('li', { class: 'faint', text: 'Belum ada.' })]));
