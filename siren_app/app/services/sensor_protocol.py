@@ -98,7 +98,9 @@ def parse_ppg(line: str) -> dict[str, Any] | None:
         "hr": clean(to_float(raw["hr"]), 20, 250),
         "hr_src": raw["hr_src"].strip(),
         "spo2": clean(to_float(raw["spo2"]), 50, 100),
-        "rr": clean(to_float(raw["rr"]), 4, 60),
+        # RR v4 has no fixed 36/min ceiling: it searches up to half the heart
+        # rate, at most 90/min, so the parser must not cut fast breathing off.
+        "rr": clean(to_float(raw["rr"]), 4, 90),
         "beats": to_float(raw["beats"]),
         # Temperature and motion relayed from the other board over ESP-NOW
         "tcore": _body_temp(to_float(raw["tcore"])),

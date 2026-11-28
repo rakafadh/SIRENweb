@@ -62,3 +62,14 @@ def test_noise_and_headers_are_ignored():
         b"\xff\xfe garbage",
     ]:
         assert parse_line(line) is None
+
+
+def test_fast_breathing_from_rr_v4_is_kept():
+    row = WITH_PATIENT.replace(",97,15.5,", ",97,48.0,")
+    assert parse_line(row).data["rr"] == 48.0
+    assert parse_line(WITH_PATIENT.replace(",97,15.5,", ",97,95.0,")).data["rr"] is None
+
+
+def test_rr_status_line_is_ignored():
+    for line in ("R,52000,ok,2,36", "R,53000,tracking,1,36", "R,54000,fast?,0,50", "R,55000,no finger,0,0"):
+        assert parse_line(line) is None
