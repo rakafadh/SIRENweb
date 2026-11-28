@@ -27,6 +27,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
+from app.bp_calibrated.calibrated import resample_25hz
+from app.bp_calibrated.features_v2 import extract_sensor
+from app.bp_calibrated.quality import ok_calibrate, ok_estimate
 from app.config import settings
 
 log = logging.getLogger("siren.bp")
@@ -34,6 +39,13 @@ log = logging.getLogger("siren.bp")
 FINGER_LOST_RESET_S = 5.0      # finger off this long: the stored pulse shapes no longer apply
 CUFF_START_KEEP_S = 600.0      # a "Mulai ukur" window older than this is not used
 GAIN_HOLD_S = 60.0             # keep showing the last estimate this long across an LED gain step
+# Cleanest-window choice (siren-bp-model-test, live_bp.py): a short twitch spoils
+# a few beats, and with them every 30 s window that holds them. Candidate
+# windows end on a fixed device-time grid, so each is scored once and cached.
+WINDOW_STEP_MS = 2500.0          # as live_bp.py
+ESTIMATE_LOOKBACK_MS = 10000.0  # an estimate may use a clean window ending this recently
+CUFF_PRE_MS = 30000.0           # "Mulai ukur": windows ending in the 30 s before it
+QUALITY_KEEP_MS = 15 * 60 * 1000.0
 USABLE = ("OK", "AWAITING_CUFF")
 
 # Why the model asks for a cuff, in the crew's words
@@ -131,11 +143,14 @@ class BloodPressureEstimator:
 
     def _clear(self) -> None:
         self.calibrated_at: float | None = None
-        self.cuff_start: tuple[float, Any, Any, float | None] | None = None   # (wall time, times, values, motion)
+        # (wall time, times, values, motion, device ms at "Mulai ukur", window passed the gate)
+        self.cuff_start: tuple[float, Any, Any, float | None, float, bool] | None = None
         self.finger_off_since: float | None = None
         self.finger_reset = False
         self.wave_resets_seen: int | None = None
         self.last: tuple[float, BpEstimate] | None = None
+        self.last_end_ms: float | None = None    # newest window given to the model; time only moves forward
+        self.quality: dict[float, Any] = {}      # window end (device ms) -> features, or None if unusable
 
     @property
     def loaded(self) -> bool:
@@ -171,15 +186,74 @@ class BloodPressureEstimator:
                 self.model.reset()
             self._clear()
 
+    # ------------------------------------------------------ window choice --
+    def _features(self, sensors, end_ms: float):
+        """The model's features of the 30 s window ending at end_ms (cached), or None."""
+        key = round(end_ms)
+        if key in self.quality:
+            return self.quality[key]
+        times, values, _why = sensors.bp_window(end_ms=end_ms)
+        feats = None
+        if times is not None:
+            w = resample_25hz(times, values, self.model.config.window_s)
+            if w is not None:
+                with np.errstate(all="ignore"):
+                    f = extract_sensor(w)
+                if np.isfinite(f[-2]):
+                    feats = f
+        self.quality[key] = feats
+        if len(self.quality) > 400:
+            newest = max(self.quality)
+            self.quality = {k: v for k, v in self.quality.items() if k >= newest - QUALITY_KEEP_MS}
+        return feats
+
+    def _candidates(self, newest: float, lo: float, hi: float) -> list[float]:
+        """Window ends between lo and hi (device ms): the grid points, plus hi itself if it is newest."""
+        ends = [hi] if hi >= newest else []
+        g = (hi // WINDOW_STEP_MS) * WINDOW_STEP_MS
+        while g >= lo:
+            if g < hi or not ends:
+                ends.append(g)
+            g -= WINDOW_STEP_MS
+        return ends
+
+    def _best(self, sensors, ends: list[float], accept) -> tuple[float | None, bool]:
+        """Of these window ends, the one the quality gate accepts with the highest score.
+        Returns (end_ms, accepted); end_ms None when no window there is usable at all."""
+        best, best_key = None, None
+        for end in ends:
+            f = self._features(sensors, end)
+            if f is None:
+                continue
+            key = (bool(accept(f, self.model.gate)), float(f[-2]))
+            if best_key is None or key > best_key:
+                best, best_key = end, key
+        return best, bool(best_key and best_key[0])
+
+    def _window_at(self, sensors, end_ms: float):
+        times, values, _why = sensors.bp_window(end_ms=end_ms)
+        lag = max(0.0, ((sensors.wave_newest_ms() or end_ms) - end_ms) / 1000.0)
+        return times, values, lag
+
     def mark_cuff_start(self, sensors) -> Calibration:
-        """The crew starts the cuff: keep the PPG window from before inflation."""
+        """The crew starts the cuff: keep the cleanest PPG window from before inflation."""
         times, values, why = sensors.bp_window(0.0)
-        if times is None:
+        if times is None or self.model is None:
             with self._lock:
                 self.cuff_start = None
+            why = why if times is None else "NO_MODEL"
             return Calibration(False, why, CALIBRATION_FAILED.get(why, "sinyal PPG belum siap"))
         with self._lock:
-            self.cuff_start = (time.time(), times, values, sensors.motion_median(30.0))
+            newest = float(times[-1])
+            end, _ok = self._best(sensors, self._candidates(newest, newest - CUFF_PRE_MS, newest), ok_calibrate)
+            if end is not None and end != newest:
+                times, values, lag = self._window_at(sensors, end)
+            else:
+                end, lag = newest, 0.0
+            motion = sensors.motion_median(30.0, lag_s=lag)
+            if motion is None:
+                motion = sensors.motion_median(30.0)
+            self.cuff_start = (time.time(), times, values, motion, newest, bool(_ok))
         return Calibration(True, "OK", "Sinyal PPG sebelum manset tersimpan.")
 
     def calibrate(self, sensors, sbp: float, dbp: float | None) -> Calibration:
@@ -192,23 +266,59 @@ class BloodPressureEstimator:
             saved = self.cuff_start
             self.cuff_start = None
         if saved is not None and time.time() - saved[0] <= CUFF_START_KEEP_S:
-            _, times, values, motion = saved
+            _, times, values, motion, started_ms, clean = saved
+            if not clean:
+                # Nothing before the cuff passed the gate: try the windows since then
+                later = self._later_window(sensors, started_ms)
+                if later is not None:
+                    times, values, motion = later
         else:
             times, values, why = sensors.bp_window(self.entry_lag_s)
             if times is None:
                 return Calibration(False, why, CALIBRATION_FAILED.get(why, "sinyal PPG belum siap"))
             motion = sensors.motion_median(30.0, lag_s=self.entry_lag_s)
+            # The cleanest window from before inflation (45 to 75 s back), else any since
+            with self._lock:
+                newest = sensors.wave_newest_ms() or float(times[-1])
+                pre_hi = newest - self.entry_lag_s * 1000.0
+                end, ok_pre = self._best(sensors, self._candidates(newest, pre_hi - CUFF_PRE_MS, pre_hi),
+                                         ok_calibrate)
+                if not ok_pre:
+                    later, ok_later = self._best(sensors, self._candidates(newest, pre_hi, newest), ok_calibrate)
+                    if ok_later:
+                        end = later
+                if end is not None:
+                    t2, v2, lag = self._window_at(sensors, end)
+                    if t2 is not None:
+                        times, values = t2, v2
+                        motion = sensors.motion_median(30.0, lag_s=lag)
             if motion is None:      # no accelerometer values that far back: use the latest
                 motion = sensors.motion_median(30.0)
         with self._lock:
             ok, why = self.model.calibrate(times, values, float(sbp), float(dbp), motion_g=motion)
             if ok:
+                self.last_end_ms = max(self.last_end_ms or 0.0, float(times[-1]))
                 self.calibrated_at = time.time()
                 self.finger_reset = False
                 self.last = None
         if ok:
             return Calibration(True, "OK", "Estimasi TD dikalibrasi dengan manset ini.")
         return Calibration(False, why, CALIBRATION_FAILED.get(why, "sinyal PPG belum siap"))
+
+    def _later_window(self, sensors, started_ms: float):
+        """Cleanest gate-passing window ending after "Mulai ukur", as (times, values, motion)."""
+        with self._lock:
+            newest = sensors.wave_newest_ms()
+            if newest is None or newest <= started_ms:
+                return None
+            end, ok = self._best(sensors, self._candidates(newest, started_ms + 1, newest), ok_calibrate)
+            if end is None or not ok:
+                return None
+            times, values, lag = self._window_at(sensors, end)
+        if times is None:
+            return None
+        motion = sensors.motion_median(30.0, lag_s=lag)
+        return times, values, motion if motion is not None else sensors.motion_median(30.0)
 
     # ------------------------------------------------------------ estimate --
     def estimate(self, sensors, finger: bool | None, news2_total: int | None) -> BpEstimate:
@@ -217,11 +327,14 @@ class BloodPressureEstimator:
         now = time.time()
         with self._lock:
             resets = sensors.wave_resets
-            if self.wave_resets_seen is not None and resets != self.wave_resets_seen and self.model.cuffs:
-                # The board restarted or lines were lost: device time and pulse baseline are gone
-                self.model.reset()
-                self.calibrated_at = None
-                self.finger_reset = True
+            if self.wave_resets_seen is not None and resets != self.wave_resets_seen:
+                self.quality.clear()        # device time started again
+                self.last_end_ms = None
+                if self.model.cuffs:
+                    # The board restarted or lines were lost: device time and pulse baseline are gone
+                    self.model.reset()
+                    self.calibrated_at = None
+                    self.finger_reset = True
             self.wave_resets_seen = resets
             if finger is False:
                 self.finger_off_since = self.finger_off_since or now
@@ -238,6 +351,18 @@ class BloodPressureEstimator:
                 return self.last[1]
             return BpEstimate(why, STATUS_MESSAGE.get(why, STATUS_MESSAGE["COLLECTING"]))
         with self._lock:
+            # The cleanest window ending in the last 10 s, so a short twitch does not blank the estimate
+            newest = float(times[-1])
+            lo = newest - ESTIMATE_LOOKBACK_MS
+            if self.last_end_ms is not None:
+                lo = max(lo, self.last_end_ms + 1)
+            end, ok = self._best(sensors, self._candidates(newest, lo, newest), ok_estimate)
+            if ok and end != newest:
+                t2, v2, _lag = self._window_at(sensors, end)
+                if t2 is not None:
+                    times, values = t2, v2
+            if ok:
+                self.last_end_ms = float(times[-1])
             r = self.model.estimate(times, values, news2_total=news2_total)
             z = float(getattr(self.model, "score_z", 0.0))
         status = r["status"]

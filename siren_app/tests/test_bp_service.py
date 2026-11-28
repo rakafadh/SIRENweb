@@ -5,6 +5,7 @@ parser, so these tests cover parsing, windows, calibration and the schedule
 together. Simulated pulses only show the plumbing works, never accuracy.
 """
 
+import math
 import random
 from datetime import timedelta
 from types import SimpleNamespace
@@ -18,7 +19,7 @@ from app.services.sensor_service import MockFeeder, SensorManager
 
 
 def stream(seconds: int, scenario: str = "stable", manager: SensorManager | None = None, feeder: MockFeeder | None = None,
-           start: int = 0, motion: float | None = None, finger: bool = True):
+           start: int = 0, motion: float | None = None, finger: bool = True, twitch: tuple[int, int] | None = None):
     """Feed `seconds` of simulated board output into a SensorManager."""
     random.seed(start + 7)
     manager = manager or SensorManager()
@@ -29,6 +30,12 @@ def stream(seconds: int, scenario: str = "stable", manager: SensorManager | None
                 parts = line.split(",")          # the MPU6050 is on the PPG board
                 parts[PPG_FIELDS.index("accel_rms")] = f"{motion:.4f}"
                 line = ",".join(parts)
+            if twitch and twitch[0] <= sec < twitch[1] and line.startswith("W,"):
+                parts = line.split(",")               # a finger twitch: big irregular swings over the pulse
+                rng = random.Random(sec)
+                vals = [int(v) + int(12000 * math.sin(2 * math.pi * 2.3 * (sec + i / 25) + rng.random()) + rng.gauss(0, 6000))
+                        for i, v in enumerate(parts[3:])]
+                line = ",".join(parts[:3] + [str(v) for v in vals])
             if not finger and port == "MOCK-PPG" and line[0].isdigit():
                 line = line.replace(",120000,", ",900,", 1)   # IR DC this low = no finger
             manager.handle_line(port, line)
@@ -259,3 +266,61 @@ def test_reminder_wording_follows_the_request(client, app_module):
     app_module.monitor._reminder_at -= 301
     _live(client, app_module)
     assert [n["title"] for n in client.get("/api/notifications").json()["items"] if n["kind"] == "MANSET"] == ["Ukur TD manset sekarang"]
+
+
+# ------------------------------------------------- cleanest window (28 Nov) --
+def _newest_passes(bp, manager, gate_check) -> bool:
+    from app.bp_calibrated.calibrated import resample_25hz
+    from app.bp_calibrated.features_v2 import extract_sensor
+    times, values, _ = manager.bp_window(0.0)
+    f = extract_sensor(resample_25hz(times, values, 30.0))
+    return bool(gate_check(f, bp.model.gate))
+
+
+def test_rescue_gate_stays_off(bp):
+    assert bp.model.gate.rescue is False             # not validated on the VitalDB test set
+    assert bp.model.gate.est_sqi == 0.80 and bp.model.gate.cal_sqi == 0.90
+
+
+def test_short_twitch_does_not_blank_the_estimate(bp):
+    from app.bp_calibrated.quality import ok_estimate
+
+    bp.reset()
+    manager, feeder = stream(80)
+    assert bp.calibrate(manager, 122, 81).ok
+    manager, feeder = stream(20, manager=manager, feeder=feeder, start=80)
+    assert bp.estimate(manager, True, 2).status == "OK"
+    # A twitch in the last 2 s spoils the newest window...
+    manager, feeder = stream(5, manager=manager, feeder=feeder, start=100, twitch=(103, 105))
+    assert not _newest_passes(bp, manager, ok_estimate)
+    # ...but a clean window from a few seconds earlier still gives the estimate
+    est = bp.estimate(manager, True, 2)
+    assert est.status == "OK" and est.usable and abs(est.sbp - 122) < 15
+
+
+def test_cuff_start_uses_the_clean_window_before_a_twitch(bp):
+    from app.bp_calibrated.quality import ok_calibrate
+
+    bp.reset()
+    manager, feeder = stream(44)
+    manager, feeder = stream(4, manager=manager, feeder=feeder, start=44, twitch=(44, 48))
+    assert not _newest_passes(bp, manager, ok_calibrate)   # the old code calibrated with this one
+    assert bp.mark_cuff_start(manager).ok
+    manager, feeder = stream(10, manager=manager, feeder=feeder, start=48)
+    assert bp.calibrate(manager, 118, 76).ok
+
+
+def test_cuff_without_start_avoids_a_spoilt_window(bp):
+    bp.reset()
+    manager, feeder = stream(80)
+    manager, feeder = stream(3, manager=manager, feeder=feeder, start=80, twitch=(80, 83))
+    manager, feeder = stream(45, manager=manager, feeder=feeder, start=83)
+    assert bp.calibrate(manager, 120, 78).ok             # the 45 s-back window holds the twitch; an earlier one does not
+
+
+def test_firmware_gain_lock_lines_are_ignored():
+    from app.services.sensor_protocol import parse_line
+
+    for line in ("AGC locked at LED 60 (IR DC 120000)", "AGC unlocked (finger lifted)",
+                 "AGC unlocked (clipping), adjusting"):
+        assert parse_line(line) is None

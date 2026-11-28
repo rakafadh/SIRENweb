@@ -24,6 +24,7 @@ import numpy as np
 from .features_v2 import FEATURE_VERSION, FS, N_FEATURES, extract_sensor
 from .kalman import BpKalman, KalmanConfig
 from .multipoint import combine, fit_gain, pair_arrays
+from .quality import QualityGate, ok_calibrate, ok_estimate
 
 MODEL_DIR = Path(__file__).resolve().parent.parent / "model"
 
@@ -61,6 +62,14 @@ class CalibrationConfig:
     recal_on_finger_lost: bool = True      # sensor repositioned: old baseline no longer fits
     hr_change_frac: float = 0.25           # HR moved this much since calibration: cuff check
     min_estimate_sqi: float = 0.80         # windows below this give no estimate
+    # Rescue gate (bp_model/quality.py): also accept a window with a lower score when most of its
+    # beats are clean (a twitch spoilt a few beats). Off unless the settings file's "quality"
+    # block, written by scripts/quality_gate_check.py --write after the VitalDB check, turns it on.
+    quality_rescue: bool = False
+    rescue_est_sqi: float = 0.60
+    rescue_est_frac: float = 0.75
+    rescue_cal_sqi: float = 0.75
+    rescue_cal_frac: float = 0.85
     # Kalman mode (used when the settings file has "kalman", written by vitaldb_train.py section 6).
     # Cuff every max_interval_kalman_min plus an extra cuff whenever the cautious NEWS2 SBP score is
     # worse than the last cuff's (UNCERTAINTY), at most one per min_cuff_gap_min. Robustness check on
@@ -175,6 +184,9 @@ class CalibratedBpModel:
         self.alerts = {}
         if Path(alert_path).exists():
             self.alerts = json.loads(Path(alert_path).read_text(encoding="utf-8"))
+        for k, v in (self.alerts.get("quality") or {}).items():     # validated quality gate, if any
+            if hasattr(self.config, k):
+                setattr(self.config, k, v)
         self.cuffs: list[Calibration] = []
         self.gain = (1.0, 1.0)
         self.hist: list[tuple[float, np.ndarray]] = []        # (t_ms, features) of clean windows
@@ -198,8 +210,15 @@ class CalibratedBpModel:
             self.score_z = float(self.alerts.get("news2_score_z", 0.0)) if self.schedule == "kalman" \
                 else float(self.alerts.get("news2_score_z_smart", 0.3))
 
+    @property
+    def gate(self) -> QualityGate:
+        c = self.config
+        return QualityGate(est_sqi=c.min_estimate_sqi, cal_sqi=c.min_sqi, rescue=bool(c.quality_rescue),
+                           rescue_est_sqi=c.rescue_est_sqi, rescue_est_frac=c.rescue_est_frac,
+                           rescue_cal_sqi=c.rescue_cal_sqi, rescue_cal_frac=c.rescue_cal_frac, window_s=c.window_s)
+
     def _remember(self, t_ms: float, f: np.ndarray):
-        if np.isfinite(f[-2]) and f[-2] >= self.config.min_estimate_sqi:
+        if np.isfinite(f[-2]) and bool(ok_estimate(f, self.gate)):
             self.hist.append((t_ms, f))
         self.hist = [(t, x) for t, x in self.hist if t >= t_ms - (RECENT_FROM_S + 60) * 1000]
 
@@ -249,7 +268,7 @@ class CalibratedBpModel:
             return False, "NO_BEATS"
         sqi = f[-2]
         nb = f[-3]
-        if not np.isfinite(sqi) or sqi < c.min_sqi or nb < c.min_beats:
+        if not np.isfinite(sqi) or not bool(ok_calibrate(f, self.gate)) or nb < c.min_beats:
             return False, "POOR_SIGNAL"
         t_cuff = float(times_ms[-1])
         is_confirm = self.confirm_due_ms is not None and t_cuff >= self.confirm_due_ms - 30000
@@ -288,7 +307,7 @@ class CalibratedBpModel:
         if w is None:
             return {"status": "COLLECTING"}
         f = extract_sensor(w)
-        if np.isnan(f).all() or not np.isfinite(f[-2]) or f[-2] < c.min_estimate_sqi:
+        if np.isnan(f).all() or not np.isfinite(f[-2]) or not bool(ok_estimate(f, self.gate)):
             return {"status": "POOR_SIGNAL"}
 
         t_now = float(times_ms[-1])

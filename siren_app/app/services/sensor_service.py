@@ -266,8 +266,15 @@ class SensorManager:
         keep = times >= times[-1] - window_s * 1000.0
         return times[keep], values[keep], fs
 
-    def bp_window(self, lag_s: float = 0.0, window_s: float = 31.0) -> tuple[np.ndarray | None, np.ndarray | None, str]:
-        """Raw IR for the BP model: the window_s seconds that ended lag_s ago.
+    def wave_newest_ms(self) -> float | None:
+        """Device time of the newest raw IR sample."""
+        with self._lock:
+            return self.wave[-1][0] if self.wave else None
+
+    def bp_window(self, lag_s: float = 0.0, window_s: float = 31.0,
+                  end_ms: float | None = None) -> tuple[np.ndarray | None, np.ndarray | None, str]:
+        """Raw IR for the BP model: the window_s seconds that ended lag_s ago,
+        or that ended at device time end_ms when it is given.
 
         Returns (times_ms, values, "OK") or (None, None, reason). A window that
         contains an LED gain step is refused, because the step looks like a
@@ -276,7 +283,7 @@ class SensorManager:
         times, values, _fs = self.waveform(WAVE_BUFFER_S)
         if times.size == 0:
             return None, None, "NO_WAVEFORM"
-        end = times[-1] - lag_s * 1000.0
+        end = times[-1] - lag_s * 1000.0 if end_ms is None else min(float(end_ms), times[-1])
         with self._lock:
             gains = list(self.gain_ms)
         if times[0] > end - (window_s - 1.0) * 1000.0:

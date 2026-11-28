@@ -291,6 +291,8 @@ Lakukan saat ada versi baru di branch `main`, dan **tidak ada pasien aktif**.
 
 **Pembaruan model TD terkalibrasi (November 2026):** board PPG perlu di-flash ulang supaya mengirim penanda perubahan intensitas LED, dan paket `scipy` baru terpasang lewat langkah 6. Board suhu tidak perlu di-flash ulang.
 
+**Pembaruan kualitas sinyal TD (28 November 2026):** board PPG perlu di-flash ulang supaya intensitas LED dikunci begitu sinyal stabil (monitor serial menampilkan `AGC locked at LED ...`). Board suhu tidak perlu di-flash ulang.
+
 **Pemindahan MPU6050 ke board PPG:** **kedua** board perlu di-flash ulang. Board PPG sekarang membaca MPU6050 sendiri, dan board suhu tidak lagi mencarinya. Setelah flash, monitor serial board PPG harus menampilkan `MPU6050 ready.`
 
 ---
