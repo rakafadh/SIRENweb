@@ -49,6 +49,9 @@ class Settings:
     SENSOR_STALE_S: float = float(os.getenv("SENSOR_STALE_S", "5"))
     # A manually entered vital is used as a fallback for this long.
     MANUAL_TTL_S: float = float(os.getenv("MANUAL_TTL_S", "900"))
+    # A manual respiratory rate has no time limit: it stays until the sensor has
+    # given a valid RR for this long without a gap, then the sensor takes over.
+    RR_MANUAL_RELEASE_S: float = float(os.getenv("RR_MANUAL_RELEASE_S", "10"))
     # How often the monitor writes a snapshot to the database.
     SNAPSHOT_INTERVAL_S: float = float(os.getenv("SNAPSHOT_INTERVAL_S", "10"))
     # Provisional: above this RMS vehicle vibration, HR and RR are flagged.

@@ -111,7 +111,8 @@ static const uint32_t TEMP_STALE_MS = 5000;
 #define FORCE_REGISTER_CONFIG 0
 
 // 0 prints the human-readable console line.
-// 1 prints machine-readable CSV, which is what tools/siren_dashboard.py parses.
+// 1 prints machine-readable CSV, which is what tools/siren_dashboard.py parses,
+// plus an R line per row with the RR status (see the CSV print in loop()).
 #define CSV_OUTPUT 1
 
 // 1 also prints the raw IR waveform for the BP model (siren-bp-model-test,
@@ -624,6 +625,13 @@ void loop() {
     }
 
 #if CSV_OUTPUT
+    // RR status line, just before the CSV row it belongs to. Starts with a
+    // letter, so the 23-column parsers (siren_dashboard.py, live_bp.py) skip it;
+    // tools/siren_monitor.py shows it as the reason when there is no RR.
+    //   R,<ms>,<note>,<signals used>,<search ceiling, breaths/min>
+    Serial.printf("R,%lu,%s,%u,%.0f\n", millis(),
+                  !finger ? "no finger" : (respLatest.note[0] ? respLatest.note : "starting"),
+                  respLatest.contributing, isnan(respLatest.rateMax) ? 0.0f : respLatest.rateMax);
     Serial.printf("%lu,%.1f,%u,%lu,%.3f,%.2f,%.1f,%c,%.1f,%u,%ld,%.1f,%.1f,%.1f,%.1f,%.1f,%lu,%.2f,%.2f,%.2f,%.4f,%.4f,%.2f\n",
                   millis(), fsMeasured, ledPower, irDc, drift, perfusion,
                   hrUsable ? hrValue : -1.0f, hrSource,
@@ -651,7 +659,7 @@ void loop() {
     if (respLatest.valid) {
         Serial.printf("RR=%4.1f/min(n=%u,sd=%3.1f,%s)  ",
                       respLatest.rate, respLatest.contributing, respLatest.spread,
-                      respLatest.preliminary ? "prelim" : "32s");
+                      respLatest.note);   // ok, prelim, tracking, fast, slow
     } else if (!resp.ready()) {
         Serial.printf("RR=--(%2.0f/%2.0fs,b=%lu)    ", resp.fillSeconds(), resp.minFillSeconds(), resp.beats());
     } else {

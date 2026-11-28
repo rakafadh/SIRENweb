@@ -34,6 +34,9 @@ COLOUR_CODE = {TR.HIJAU: "HIJAU", TR.KUNING: "KUNING", TR.MERAH: "MERAH"}
 CODE_COLOUR = {code: value for value, code in COLOUR_CODE.items()}
 VITAL_PARAMS = ("hr", "spo2", "rr", "temp")
 MOTION_SENSITIVE = ("hr", "rr")
+# Manual values that hold until the sensor is valid again, instead of expiring
+# after MANUAL_TTL_S. The PPG respiratory rate is often unavailable for a while.
+HOLD_UNTIL_SENSOR = ("rr",)
 # Must have a value, or a written reason why it could not be measured, before
 # handover. Consciousness and supplemental oxygen always have a value.
 HANDOVER_REQUIRED = {
@@ -106,6 +109,7 @@ class Monitor:
         self.clock = time.time   # tests replace this to move time forward
         self.manual: dict[str, tuple[float, float]] = {}   # param -> (value, epoch seconds)
         self.unmeasured: dict[str, dict[str, str]] = {}    # param -> {"reason", "at"}
+        self._sensor_valid_since: dict[str, float] = {}     # param -> clock time the sensor became valid
         self.latest: dict[str, Any] | None = None
         self._last_snapshot = 0.0
         self._last_colour: str | None = None
@@ -180,7 +184,7 @@ class Monitor:
             return {
                 param: {"value": value, "age_s": round(now - at)}
                 for param, (value, at) in self.manual.items()
-                if now - at <= self.cfg.MANUAL_TTL_S
+                if param in HOLD_UNTIL_SENSOR or now - at <= self.cfg.MANUAL_TTL_S
             }
 
     # ---------------------------------------------------------------- cycle --
@@ -206,6 +210,7 @@ class Monitor:
                     return self.latest   # frozen at the moment the handover page opened
 
                 vitals = self._vitals()
+                self._release_manual(db, patient, vitals)
                 # BP first: a usable estimate stands in for the cuff in NEWS2
                 bp = self._bp_estimate(vitals)
                 op = operator_for(patient, self.cfg, bp)
@@ -297,14 +302,18 @@ class Monitor:
         self.paused_at = None
         self.bp.reset()   # the last patient's cuff calibration does not apply
 
-        cutoff = utcnow() - timedelta(seconds=self.cfg.MANUAL_TTL_S)
+        # All entries of this trip: a manual RR has no time limit. manual_values()
+        # applies MANUAL_TTL_S to the other vitals.
+        self._sensor_valid_since.clear()
         events = db.scalars(
             select(PatientEvent)
-            .where(PatientEvent.patient_id == patient.id, PatientEvent.kind == "MANUAL_VITAL", PatientEvent.created_at >= cutoff)
+            .where(PatientEvent.patient_id == patient.id, PatientEvent.kind == "MANUAL_VITAL")
             .order_by(PatientEvent.created_at)
         ).all()
         for event in events:
             for param, value in (event.data or {}).items():
+                if param not in VITAL_PARAMS:
+                    continue   # e.g. "released" on an automatic hand-back
                 if value is None:
                     self.manual.pop(param, None)
                 else:
@@ -380,11 +389,39 @@ class Monitor:
                     entry["via"] = readings["temp_via"]
             elif param in manual:
                 entry.update(value=manual[param]["value"], source="MANUAL", age_s=manual[param]["age_s"])
+                if param in HOLD_UNTIL_SENSOR:
+                    entry["until_sensor"] = True
             out[param] = entry
         out["_pi"] = readings["pi"]
         out["_motion_g"] = motion
         out["_finger"] = readings["finger"]
         return out
+
+    def _release_manual(self, db, patient: Patient, vitals: dict[str, Any]) -> None:
+        """Hand a held manual value back to the sensor once the sensor is valid.
+
+        The sensor value shows as soon as it exists (sensor first, as for every
+        vital). The manual value is only dropped after RR_MANUAL_RELEASE_S of
+        valid sensor readings without a gap, so a sensor that flickers on for a
+        second does not throw away the crew's count.
+        """
+        now = self.clock()
+        for param in HOLD_UNTIL_SENSOR:
+            entry = vitals[param]
+            if entry["source"] in ("SENSOR", "MOCK"):
+                since = self._sensor_valid_since.setdefault(param, now)
+            else:
+                self._sensor_valid_since.pop(param, None)
+                continue
+            if param in self.manual and now - since >= self.cfg.RR_MANUAL_RELEASE_S:
+                value = self.manual.pop(param)[0]
+                label = HANDOVER_REQUIRED.get(param, param)
+                db.add(PatientEvent(
+                    patient_id=patient.id, kind="MANUAL_VITAL",
+                    detail=f"{label} manual {value:g} dilepas, sensor valid lagi",
+                    data={param: None, "released": True},
+                ))
+                db.commit()
 
     def _bp_estimate(self, vitals: dict[str, Any]) -> BpEstimate:
         now = time.time()

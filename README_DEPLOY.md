@@ -293,6 +293,8 @@ Lakukan saat ada versi baru di branch `main`, dan **tidak ada pasien aktif**.
 
 **Pembaruan kualitas sinyal TD (28 November 2026):** board PPG perlu di-flash ulang supaya intensitas LED dikunci begitu sinyal stabil (monitor serial menampilkan `AGC locked at LED ...`). Board suhu tidak perlu di-flash ulang.
 
+**Laju napas v4 (28 November 2026):** board PPG perlu di-flash ulang. Laju napas tidak lagi terkunci di 6–9/menit (gelombang Mayer), tampil lebih sering, dan napas cepat di atas 36/menit ikut terbaca. Monitor serial sekarang juga mengirim baris `R,...` berisi alasan bila laju napas kosong (aplikasi mengabaikannya). Board suhu tidak perlu di-flash ulang. Detail dan cara uji ulang rekaman ada di `siren-sensors/tools/rr_bench/`.
+
 **Pemindahan MPU6050 ke board PPG:** **kedua** board perlu di-flash ulang. Board PPG sekarang membaca MPU6050 sendiri, dan board suhu tidak lagi mencarinya. Setelah flash, monitor serial board PPG harus menampilkan `MPU6050 ready.`
 
 ---

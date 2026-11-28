@@ -531,6 +531,12 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
 .src { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.05em; padding: 2px 7px; border-radius: 999px; color: var(--text-3); background: var(--surface-3); }
 .src.manual, .src.mock { color: var(--amber-fg); background: var(--amber-soft); }
 .src.est { color: var(--accent-fg); background: var(--accent-soft); }
+.vital-fill {
+  font: inherit; font-size: 0.72rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+  margin: -5px 0; color: var(--amber-fg); background: var(--amber-soft); border: 1px solid var(--amber);
+}
+.vital-fill:active { transform: translateY(1px); }
+.vital-fill[hidden] { display: none; }
 .vital-value { display: flex; align-items: baseline; gap: 6px; margin-top: auto; }
 .vital-value strong { font-size: 2.35rem; font-weight: 800; line-height: 1; letter-spacing: -0.03em; }
 .vital-value .unit { font-size: 0.78rem; font-weight: 600; color: var(--text-3); }

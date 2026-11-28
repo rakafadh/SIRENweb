@@ -21,7 +21,7 @@ SIREN/
 ├── siren-sensors/            firmware ESP32 (PlatformIO)
 │   ├── src/ppg/              node PPG: MAX30102 + MPU6050 (getaran)
 │   ├── src/temp/             node suhu: MLX90614
-│   └── tools/                triage.py (algoritma rujukan laporan) dan dashboard uji hardware
+│   └── tools/                triage.py (algoritma rujukan laporan), dashboard dan monitor uji hardware, rr_bench (uji laju napas tanpa hardware)
 ├── siren-bp-model-test/      sumber model tekanan darah yang dipakai: pelatihan, evaluasi, uji live
 └── BloodPressure-Model/      model tekanan darah versi lama, tidak dipakai aplikasi lagi
 ```
