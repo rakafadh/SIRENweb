@@ -13,12 +13,19 @@ alert_settings_vitaldb.json, schedule "smart_kalman"): Kalman fusion, cuff every
 estimate - 0.3 x sigma, last estimate held while a requested cuff is pending.
 
 Type a command and press Enter:
-  s          cuff started NOW: keeps the 30 s PPG window from just before inflation
-  118/76     cuff reading: calibrates with the window saved by "s" (if you forgot
-             "s", with the window that ended --entry-lag seconds ago) and prints
-             the estimate just before it, so you see the error
+  s          cuff started NOW. The screen goes quiet and waits for the reading.
+  118/76     cuff reading: calibrates with the cleanest 30 s PPG window between
+             30 s before "s" and now (cuff on the OTHER arm, so the PPG is not
+             disturbed by inflation); without "s", the cleanest window of the
+             last --entry-lag + 30 s. Prints the estimate just before it.
+  x          cancel a waiting "s" (no reading coming)
   c 118/76   check only: compares with the estimate, no calibration
   q          quit and print the error summary
+
+Signal quality: every estimate uses the cleanest of the 30 s windows ending in
+the last --lookback seconds (default 10 s), so a short movement no longer
+blanks 30 s of estimates. The quality limits themselves are the validated ones
+(0.90 to calibrate, 0.80 to estimate) and are not lowered.
 
 Writes results/live/<time>_raw.txt (every serial line; replay with
     python scripts/run_calibrated_on_log.py results/live/<time>_raw.txt --model vitaldb --cuff 118/76)
@@ -38,7 +45,9 @@ from pathlib import Path
 
 import numpy as np
 
-from bp_model.calibrated import MODEL_DIR, CalibratedBpModel
+from bp_model.calibrated import MODEL_DIR, CalibratedBpModel, resample_25hz
+from bp_model.features_v2 import extract_sensor
+from bp_model.quality import ok_calibrate, ok_estimate
 
 ROOT = Path(__file__).resolve().parent.parent
 W_LINE = re.compile(r"W,(\d+),([\d.]+),([\d,]+)")
@@ -56,6 +65,7 @@ class Stream:
         self.t, self.ir = [], []
         self.gain_ms = []             # LED changes: windows across them are skipped
         self.hr = math.nan
+        self.pi = math.nan            # perfusion index (%) from the firmware's CSV row
         self.accel = math.nan
         self.last_ms = None           # device time of the newest sample
         self.resets = 0
@@ -100,6 +110,33 @@ class Stream:
             return (t[sel], np.asarray(self.ir, dtype=np.float64)[sel]), "OK"
 
 
+def window_features(win):
+    """The model's 26 features of a window (NaN when unusable)."""
+    w = resample_25hz(win[0], win[1], 30.0)
+    if w is None:
+        return None
+    with np.errstate(all="ignore"):
+        return extract_sensor(w)
+
+
+def best_window(stream, lo_ms, hi_ms, accept, step_ms=2500.0):
+    """Cleanest window ending between lo_ms and hi_ms. Windows the model's quality gate
+    accepts (accept(F) True) rank first, then by quality score.
+    Returns (quality, accepted, end_ms, window); window None when there is none."""
+    best, key = (float("nan"), False, None, None), None
+    end = hi_ms
+    while end >= lo_ms:
+        win, why = stream.window(end)
+        if win is not None:
+            F = window_features(win)
+            if F is not None and np.isfinite(F[-2]):
+                k = (bool(accept(F)), float(F[-2]))
+                if key is None or k > key:
+                    key, best = k, (k[1], k[0], float(win[0][-1]), win)
+        end -= step_ms
+    return best
+
+
 def reader(src, stream, raw_fh, speed):
     """Reads serial lines (or replays a file), logs them, fills the stream."""
     prev_ms, prev_wall = None, None
@@ -135,6 +172,7 @@ def reader(src, stream, raw_fh, speed):
             stream.n_csv += 1
             try:
                 stream.hr = float(parts[6])
+                stream.pi = float(parts[5])
                 stream.accel = float(parts[20])
             except ValueError:
                 pass
@@ -153,7 +191,8 @@ class Live:
         self.model = CalibratedBpModel(MODEL_DIR / "bp_calibrated_vitaldb.joblib",
                                        MODEL_DIR / "alert_settings_vitaldb.json")
         self.mlock = threading.Lock()
-        self.saved = None             # (device ms, window) kept by "s"
+        self.waiting = None           # device ms when "s" was typed, until the reading or "x"
+        self.last_end = -1e18         # end of the last window given to the model (keeps time moving forward)
         self.last_est = None          # (device ms, estimate dict) newest OK estimate
         self.cuff_on = False
         self.t0 = None
@@ -184,7 +223,11 @@ class Live:
     def status_line(self, end, t_s, st, hint):
         """No estimate: print when the status changes, else every 30 s."""
         if st != self.quiet[0] or end - self.quiet[1] >= 30000:
-            print(f"t={t_s:6.0f}s  [{st}] {hint}", flush=True)
+            pi = self.stream.pi
+            extra = "" if math.isnan(pi) else f"  PI {pi:.1f}%"
+            if not math.isnan(pi) and pi < 0.5:
+                extra += " (weak pulse: warm the hand, rest the finger lightly, cover the sensor from light)"
+            print(f"t={t_s:6.0f}s  [{st}] {hint}{extra}", flush=True)
             self.quiet = (st, end)
         self.row(end, "estimate", status=st)
 
@@ -194,7 +237,8 @@ class Live:
             self.resets_seen = s.resets
             with self.mlock:
                 self.model.reset()
-            self.saved = self.last_est = None
+            self.waiting = self.last_est = None
+            self.last_end = -1e18
             self.cuff_on = False
             print("\n!! Board restarted: calibration cleared. Take a new cuff (s, then the reading).", flush=True)
         end = s.last_ms
@@ -205,18 +249,34 @@ class Live:
             return
         if self.t0 is None:
             self.t0 = end
-        win, why = s.window(end)
         t_s = (end - self.t0) / 1000
-        if win is None:
-            self.status_line(end, t_s, why, "")
+        if self.waiting is not None:                 # "s" typed: stay quiet until the reading
+            waited = (end - self.waiting) / 1000
+            if waited > 300:
+                print("   no reading 5 min after s: waiting cancelled, estimates resume", flush=True)
+                self.waiting = None
+            else:
+                return
+        if not self.model.cuffs:
+            win, why = s.window(end)
+            self.status_line(end, t_s, "NEEDS_CALIBRATION" if win is not None else why,
+                             "no cuff yet: type s when you start the cuff" if win is not None else "")
             return
+        gate = self.model.gate
+        q, passed, wend, win = best_window(s, max(end - self.args.lookback * 1000, self.last_end + 1), end,
+                                           lambda F: ok_estimate(F, gate))
+        min_q = gate.est_sqi
+        if win is None or not passed:
+            qtxt = "" if not np.isfinite(q) else f" (signal quality {q:.2f}, needs {min_q:.2f})"
+            self.status_line(end, t_s, "POOR_SIGNAL" if win is not None or np.isfinite(q) else "COLLECTING",
+                             "keep the finger still, light contact" + qtxt)
+            return
+        self.last_end = wend
         with self.mlock:
             r = self.model.estimate(*win)
         st = r["status"]
         if st in ("NEEDS_CALIBRATION", "COLLECTING", "POOR_SIGNAL"):
-            hint = {"NEEDS_CALIBRATION": "no cuff yet: type s as the cuff starts, then the reading",
-                    "POOR_SIGNAL": "keep the finger still, light contact"}.get(st, "")
-            self.status_line(end, t_s, st, hint)
+            self.status_line(end, t_s, st, "keep the finger still, light contact")
             return
         self.last_est = (end, r)
         self.quiet = (None, -1e9)
@@ -228,6 +288,9 @@ class Live:
             line += f"  held, live {fmt(r['live_sbp'])}"
         if not math.isnan(s.hr):
             line += f"  HR {s.hr:.0f}"
+        if not math.isnan(s.pi):
+            line += f"  PI {s.pi:.1f}%"
+        line += f"  Q {q:.2f}"
         print(line, flush=True)
         if r["cuff_now"] and not self.cuff_on:
             print(f"   >>> CUFF NOW ({', '.join(r['recalibrate_reasons'])}): type s as it starts, then the reading",
@@ -249,18 +312,19 @@ class Live:
             if s.last_ms is None:
                 print(f"   no signal yet: {s.diagnose()}", flush=True)
                 return True
-            win, why = s.window(s.last_ms)
-            if win is None:
-                print(f"   cannot keep a window now ({why}); the reading will use the one before it", flush=True)
-                self.saved = None
-            else:
-                self.saved = (s.last_ms, win)
-                print("   window saved. Keep the finger still; type the reading when the cuff shows it.", flush=True)
-            self.row(s.last_ms, "cuff_start", result=why)
+            self.waiting = s.last_ms
+            print("   waiting for the cuff reading (screen paused). Keep the sensor hand still;\n"
+                  "   type the reading when the cuff shows it, e.g. 118/76  (x = cancel)", flush=True)
+            self.row(s.last_ms, "cuff_start")
+            return True
+        if text == "x":
+            if self.waiting is not None:
+                self.waiting = None
+                print("   cancelled; estimates resume", flush=True)
             return True
         m = CUFF.search(text)
         if not m:
-            print("   commands: s | 118/76 | c 118/76 | q", flush=True)
+            print("   commands: s | 118/76 | x | c 118/76 | q", flush=True)
             return True
         sbp, dbp = float(m.group(1)), float(m.group(2))
         if not (50 <= sbp <= 260 and 30 <= dbp <= 160 and dbp < sbp):
@@ -278,24 +342,29 @@ class Live:
             self.row(s.last_ms, "check", cuff_sbp=sbp, cuff_dbp=dbp,
                      est_before_sbp=est["live_sbp"] if est else "", est_before_dbp=est["live_dbp"] if est else "")
             return True
-        if self.saved is not None and s.last_ms - self.saved[0] < 10 * 60000:
-            t_cal, win = self.saved
-            src = f"window saved at s, {(s.last_ms - t_cal) / 1000:.0f} s ago"
+        if self.waiting is not None:
+            lo = self.waiting - 30000
+            src = "cleanest window from 30 s before s until now"
         else:
-            t_cal = s.last_ms - self.args.entry_lag * 1000
-            win, why = s.window(t_cal)
-            src = f"no s typed: window ending {self.args.entry_lag:g} s ago"
-            if win is None:
-                print(f"   cannot calibrate ({why}). Type s when the next cuff starts.", flush=True)
-                self.row(s.last_ms, "cuff", cuff_sbp=sbp, cuff_dbp=dbp, result=why)
-                return True
-        self.saved = None
+            lo = s.last_ms - (self.args.entry_lag + 30) * 1000
+            src = f"no s typed: cleanest window of the last {self.args.entry_lag + 30:g} s"
+        self.waiting = None
+        gate = self.model.gate
+        q, _, t_cal, win = best_window(s, lo, s.last_ms, lambda F: ok_calibrate(F, gate))
+        if win is None:
+            print("   cannot calibrate (no complete 30 s window yet). Type s when the next cuff starts.", flush=True)
+            self.row(s.last_ms, "cuff", cuff_sbp=sbp, cuff_dbp=dbp, result="COLLECTING")
+            return True
+        src += f", quality {q:.2f}"
+        self.last_end = max(self.last_end, t_cal)
         motion = None if math.isnan(s.accel) else s.accel
         with self.mlock:
             ok, why = self.model.calibrate(win[0], win[1], sbp, dbp, motion_g=motion)
         print(f"   cuff {sbp:.0f}/{dbp:.0f} ({src}) -> {why}" + (f"; {before}" if before else ""), flush=True)
         if not ok:
-            print("   not used: keep the finger still and take another cuff in a minute", flush=True)
+            print(f"   not used: best signal quality was {q:.2f}, calibration needs "
+                  f"{self.model.config.min_sqi:.2f}. Keep the sensor hand still (type with the other hand)"
+                  " and take another cuff in a minute", flush=True)
         if est is not None:
             self.checks.append((sbp, dbp, est["live_sbp"], est["live_dbp"], ok))
         self.cuff_on = False
@@ -327,6 +396,8 @@ def main():
     ap.add_argument("--step", type=float, default=5.0, help="seconds between estimates")
     ap.add_argument("--entry-lag", type=float, default=45.0,
                     help="if no s was typed: the cuff window ends this many seconds before the reading is typed")
+    ap.add_argument("--lookback", type=float, default=10.0,
+                    help="each estimate uses the cleanest 30 s window ending in the last this many seconds")
     ap.add_argument("--out", default=str(ROOT / "results" / "live"))
     args = ap.parse_args()
 
@@ -373,7 +444,7 @@ def main():
                 print(f"  [estimate error] {e}", flush=True)
 
     threading.Thread(target=estimates, daemon=True).start()
-    print("Rest the fingertip on the sensor. Commands: s (cuff starting) | 118/76 | c 118/76 | q\n", flush=True)
+    print("Rest the fingertip on the sensor. Commands: s (cuff starting) | 118/76 | x (cancel s) | c 118/76 | q\n", flush=True)
     try:
         for text in sys.stdin:
             if not live.command(text):

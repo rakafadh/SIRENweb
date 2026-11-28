@@ -40,6 +40,7 @@ siren-bp-model-test/
 │   ├── vitaldb_pat_train.py  NEW  step 12 PPG only vs PPG + PAT
 │   ├── vitaldb_resp_download.py NEW step 13 PLETH at 100 Hz -> breathing variation features
 │   ├── live_bp.py            NEW  step 14 live BP from the SIREN PPG board, cuff readings typed in
+│   ├── quality_gate_check.py NEW  step 15 choose and check the rescue quality gate on VitalDB
 │   └── make_sample_data.py   rebuilds sample_data/
 ├── tests/
 │   └── test_bp_model.py      pytest checks
@@ -216,6 +217,32 @@ Windows across an LED gain step are skipped (`GAIN_CHANGE`). A board restart
 clears the calibration. Everything is saved in `results/live/`:
 `<time>_raw.txt` (replay with `--replay`, or with step 6 using `--model vitaldb`)
 and `<time>_bp.csv`.
+
+## Step 15, signal quality gate (rescue) check
+
+```
+python scripts/quality_gate_check.py            # choose on validation, check on test
+python scripts/quality_gate_check.py --write    # switch it on for the live model if it holds
+```
+
+The strict gate drops a whole 30 s window when a few beats are spoilt. The
+rescue gate (`bp_model/quality.py`) also keeps a window whose score is lower
+when most of its beats are clean. The script replays the SIREN schedule on
+VitalDB, picks the rescue thresholds on validation patients (most extra
+estimates with dangerous miss, SBP SD and "within one band" within a small
+margin), reports strict vs rescue on test, and with `--write` stores them as
+`"quality"` in `alert_settings_vitaldb.json` only if they hold on test. Model
+inputs never change; only which windows are used. Without the `"quality"`
+block the live model keeps the strict gate.
+
+`live_bp.py` also picks the cleanest window: for each estimate, of the windows
+ending in the last 10 s (`--lookback`); for a cuff, of the windows from 30 s
+before `s` until the reading is typed. After `s` the screen pauses until the
+reading (or `x`).
+
+The PPG firmware (siren-sensors, `GAIN_LOCK 1`) freezes the LED current once
+the IR level has been in range for 3 s, so motion no longer makes the
+automatic gain step and spoil 30 s of windows.
 
 ## Important about MIMIC-BP timing
 

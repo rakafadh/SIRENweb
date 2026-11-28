@@ -368,3 +368,18 @@ def test_live_stream_parses_firmware_lines_and_skips_gain_steps():
     win, why = s.window(g - 1000)                      # window before it is usable
     assert why == "OK" and win[0].size >= 25 * 29 and win[0][-1] <= g - 1000
     assert s.window(g + 32000)[1] == "OK"              # 31 s later the step is out of the window
+
+
+def test_quality_rescue_gate_keeps_mostly_clean_windows_only():
+    from bp_model.quality import QualityGate, clean_frac, effective_sqi, ok_calibrate, ok_estimate
+    F = np.full((3, 26), np.nan)
+    F[:, -6] = 72.0                       # 36 beats expected in 30 s
+    F[:, -3] = [34, 30, 12]               # clean beats kept
+    F[:, -2] = [0.95, 0.62, 0.62]         # score over all beats
+    strict, rescue = QualityGate(), QualityGate(rescue=True)
+    assert list(ok_estimate(F, strict)) == [True, False, False]
+    assert list(ok_estimate(F, rescue)) == [True, True, False]       # 83% clean beats rescued, 33% not
+    assert list(ok_calibrate(F, rescue)) == [True, False, False]     # calibration stays strict here (0.62 < 0.75)
+    assert abs(clean_frac(F)[1] - 30 / 36) < 1e-9
+    q = effective_sqi(F, rescue)
+    assert q[0] == 0.95 and q[1] == 0.80 and q[2] == 0.62
