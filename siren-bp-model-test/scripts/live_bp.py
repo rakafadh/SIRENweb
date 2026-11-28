@@ -167,6 +167,8 @@ def reader(src, stream, raw_fh, speed):
             with stream.lock:
                 stream.gain_ms.append(float(m.group(1)))
             continue
+        if line.startswith("R,"):                             # RR status line (firmware v4), not used here
+            continue
         parts = line.split(",")
         if len(parts) == 23 and parts[0].isdigit():           # the firmware's CSV row
             stream.n_csv += 1
